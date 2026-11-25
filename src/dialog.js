@@ -54,6 +54,9 @@ export function openPopMenu(anchorEl, actions, onSelect) {
     if (top + menuRect.height > window.innerHeight - 8) {
         top = Math.max(8, rect.top - menuRect.height - 4);
     }
+    if (left + menuRect.width > window.innerWidth - 8) {
+        left = window.innerWidth - menuRect.width - 8;
+    }
     if (left < 8) left = 8;
     menu.style.top = `${Math.round(top)}px`;
     menu.style.left = `${Math.round(left)}px`;
