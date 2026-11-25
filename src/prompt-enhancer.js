@@ -1,4 +1,4 @@
-import { openGroupDialog, openNoteDialog } from './dialog.js';
+import { openGroupDialog, openItemDialog } from './dialog.js';
 import {
     getGlobalSettings,
     importFromBaibai,
@@ -8,13 +8,15 @@ import {
     saveGlobalSettings,
     savePresetData,
 } from './storage.js';
-import { batchSetPromptsEnabled, setPromptEnabled } from './st-bridge.js';
+import { batchSetPromptsEnabled } from './st-bridge.js';
 
 const pState = {
     initialized: false,
     containerObserver: null,
     listObserver: null,
+    boundContainerEl: null,
     boundListEl: null,
+    toolbarEl: null,
     rafId: null,
     filter: 'all', // 'all' | 'enabled' | 'starred'
     query: '',
@@ -44,12 +46,12 @@ function formatTokens(n) {
 }
 
 function showNotice(text) {
-    const el = document.querySelector('#bb_prompt_toolbar .bb-inline-notice');
+    const el = pState.toolbarEl?.querySelector('.bb-inline-notice');
     if (!el) return;
     el.textContent = text;
     el.classList.add('is-visible');
     clearTimeout(pState.noticeTimer);
-    pState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2200);
+    pState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2400);
 }
 
 function loadCurrentPresetState() {
@@ -64,14 +66,13 @@ function loadCurrentPresetState() {
 }
 
 /**
- * Ensures the Bluebower toolbar exists right before `#completion_prompt_manager`
- * so `PromptManager.renderPromptManager()` never destroys it on chat/preset switch.
- * @param {HTMLElement} container `#completion_prompt_manager`
+ * Ensures the cached Bluebower toolbar is mounted right before `#completion_prompt_manager_list`
+ * inside `.range-block` (below the native header/footer controls).
+ * @param {HTMLElement} listEl `#completion_prompt_manager_list`
  */
-function ensurePromptChrome(container) {
-    let toolbar = document.getElementById('bb_prompt_toolbar');
-    if (!toolbar) {
-        toolbar = document.createElement('div');
+function ensurePromptToolbar(listEl) {
+    if (!pState.toolbarEl) {
+        const toolbar = document.createElement('div');
         toolbar.id = 'bb_prompt_toolbar';
         toolbar.className = 'bb-native-toolbar';
         toolbar.innerHTML = `
@@ -87,23 +88,26 @@ function ensurePromptChrome(container) {
             <div class="bb-toolbar-row bb-toolbar-actions">
                 <button type="button" class="menu_button bb-btn-sm bb-new-group-btn" title="新建分组"><i class="fa-solid fa-plus"></i><span>分组</span></button>
                 <button type="button" class="menu_button bb-btn-sm bb-batch-btn" title="批量移动条目到分组"><i class="fa-solid fa-list-check"></i><span>批量整理</span></button>
-                <button type="button" class="menu_button bb-btn-sm bb-lock-btn" title="锁定/解锁条目拖拽排序"><i class="fa-solid fa-lock"></i><span>已锁序</span></button>
+                <button type="button" class="menu_button bb-btn-sm bb-lock-btn" title="切换分组折叠视图 / 原始发送顺序拖拽"><i class="fa-solid fa-lock"></i><span>分组锁序</span></button>
                 <button type="button" class="menu_button bb-btn-sm bb-settings-btn" title="柏宝箱兼容设置"><i class="fa-solid fa-gear"></i></button>
-                <span class="bb-inline-notice"></span>
             </div>
+            <div class="bb-inline-notice"></div>
             <div class="bb-settings-drawer" id="bb_prompt_settings"></div>
             <div class="bb-batch-drawer" id="bb_prompt_batch"></div>
             <div class="bb-starred-mirror" id="bb_prompt_starred"></div>
         `;
-        container.parentNode.insertBefore(toolbar, container);
         bindToolbarEvents(toolbar);
-    } else if (toolbar.nextElementSibling !== container) {
-        container.parentNode.insertBefore(toolbar, container);
+        pState.toolbarEl = toolbar;
+    }
+
+    if (pState.toolbarEl.nextElementSibling !== listEl) {
+        listEl.parentNode.insertBefore(pState.toolbarEl, listEl);
     }
 }
 
 function bindToolbarEvents(toolbar) {
     const getListEl = () => document.getElementById('completion_prompt_manager_list');
+
     const searchInput = toolbar.querySelector('.bb-search');
     searchInput.addEventListener('input', () => {
         clearTimeout(pState.searchTimer);
@@ -152,11 +156,9 @@ function bindToolbarEvents(toolbar) {
         const gs = getGlobalSettings();
         gs.lockPromptOrder = locked;
         saveGlobalSettings();
-        const currentList = getListEl();
-        if (currentList) applyLockOrderState(currentList, locked);
-        updateLockButtonUI(toolbar, locked);
         await savePresetData(pState.presetData);
-        showNotice(locked ? '已锁定拖拽排序' : '已解锁排序');
+        scheduleEnhancePromptList();
+        showNotice(locked ? '已恢复分组折叠并锁定顺序' : '已切换为原始发送顺序，可安全拖拽调序');
     });
 
     toolbar.querySelector('.bb-settings-btn').addEventListener('click', () => {
@@ -244,12 +246,12 @@ function bindToolbarEvents(toolbar) {
 }
 
 function updateLockButtonUI(toolbar, locked) {
-    const btn = toolbar.querySelector('.bb-lock-btn');
+    const btn = toolbar?.querySelector('.bb-lock-btn');
     if (!btn) return;
     btn.classList.toggle('is-active', locked);
     btn.innerHTML = locked
-        ? '<i class="fa-solid fa-lock"></i><span>已锁序</span>'
-        : '<i class="fa-solid fa-lock-open"></i><span>可调序</span>';
+        ? '<i class="fa-solid fa-lock"></i><span>分组锁序</span>'
+        : '<i class="fa-solid fa-lock-open"></i><span>原序调序</span>';
 }
 
 function applyLockOrderState(listEl, locked) {
@@ -267,7 +269,7 @@ function applyLockOrderState(listEl, locked) {
 }
 
 function renderSettingsDrawer() {
-    const el = document.getElementById('bb_prompt_settings');
+    const el = pState.toolbarEl?.querySelector('#bb_prompt_settings');
     if (!el) return;
     if (!pState.settingsOpen) {
         el.innerHTML = '';
@@ -281,14 +283,14 @@ function renderSettingsDrawer() {
             <input type="checkbox" class="bb-sync-baibai-chk" ${gs.syncBaibai ? 'checked' : ''} />
             <span>双向同步柏宝箱格式</span>
         </label>
-        <button type="button" class="menu_button bb-btn-sm bb-reimport-baibai-btn" ${pState.hasBaibaiData ? '' : 'disabled'}>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-reimport-baibai-btn" ${pState.hasBaibaiData ? '' : 'disabled'}>
             从柏宝箱重导分组
         </button>
     `;
 }
 
 function renderBatchDrawer() {
-    const el = document.getElementById('bb_prompt_batch');
+    const el = pState.toolbarEl?.querySelector('#bb_prompt_batch');
     if (!el) return;
     if (!pState.batchMode) {
         el.innerHTML = '';
@@ -302,16 +304,34 @@ function renderBatchDrawer() {
     ].join('');
     el.classList.add('is-open');
     el.innerHTML = `
-        <span>已选 <strong>${pState.selectedIds.size}</strong> 项</span>
+        <span class="bb-batch-count">已选 <strong>${pState.selectedIds.size}</strong> 项</span>
         <select class="bb-batch-target text_pole">${options}</select>
-        <button type="button" class="menu_button bb-btn-sm bb-btn-primary" data-batch-action="apply" ${pState.selectedIds.size ? '' : 'disabled'}>确认移动</button>
-        <button type="button" class="menu_button bb-btn-sm" data-batch-action="select-all">全选</button>
-        <button type="button" class="menu_button bb-btn-sm" data-batch-action="clear">清空</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${pState.selectedIds.size ? '' : 'disabled'}>确认移动</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear">清空</button>
     `;
 }
 
 /**
- * Schedules a single RAF-batched enhancement pass on `#completion_prompt_manager_list`.
+ * Reads clean prompt name from `data-pm-name` so inline note tags never pollute it.
+ * @param {HTMLElement} li
+ * @param {string} fallbackId
+ * @returns {string}
+ */
+function getCleanPromptName(li, fallbackId) {
+    const nameEl = li.querySelector('.completion_prompt_manager_prompt_name');
+    if (nameEl?.dataset?.pmName) {
+        return nameEl.dataset.pmName.trim();
+    }
+    const inspectLink = nameEl?.querySelector('.prompt-manager-inspect-action');
+    if (inspectLink?.textContent) {
+        return inspectLink.textContent.trim();
+    }
+    return fallbackId;
+}
+
+/**
+ *Schedules a single RAF-batched enhancement pass on `#completion_prompt_manager_list`.
  */
 export function scheduleEnhancePromptList() {
     if (pState.rafId) cancelAnimationFrame(pState.rafId);
@@ -321,37 +341,43 @@ export function scheduleEnhancePromptList() {
     });
 }
 
-/**
- * Groups and folds native `.completion_prompt_manager_prompt` items in-place.
- */
 function enhancePromptList() {
     const container = document.getElementById('completion_prompt_manager');
     if (!container) return;
+    bindContainerIfNeeded(container);
 
     if (!pState.presetData) loadCurrentPresetState();
-    ensurePromptChrome(container);
 
     const listEl = document.getElementById('completion_prompt_manager_list');
     if (!listEl) return;
+
+    ensurePromptToolbar(listEl);
     bindListIfNeeded(listEl);
 
-    const toolbar = document.getElementById('bb_prompt_toolbar');
     const locked = Boolean(pState.presetData.settings?.lockPromptOrder ?? true);
-    updateLockButtonUI(toolbar, locked);
+    updateLockButtonUI(pState.toolbarEl, locked);
     applyLockOrderState(listEl, locked);
     renderSettingsDrawer();
     renderBatchDrawer();
 
     const nativeItems = Array.from(listEl.children).filter(el => el.classList.contains('completion_prompt_manager_prompt'));
     if (!nativeItems.length) {
-        const starredBox = document.getElementById('bb_prompt_starred');
-        if (starredBox) starredBox.innerHTML = '';
+        renderStarredMirror([], false);
         return;
     }
 
+    // Record original prompt_order DOM index on fresh render before grouping
+    nativeItems.forEach((li, idx) => {
+        if (li.dataset.bbOrigIdx === undefined) {
+            li.dataset.bbOrigIdx = String(idx);
+        }
+    });
+
+    // Sort back by original index first so intra-group order always reflects true prompt_order
+    nativeItems.sort((a, b) => Number(a.dataset.bbOrigIdx) - Number(b.dataset.bbOrigIdx));
+
     pState.listObserver?.disconnect();
     try {
-        // Remove previous Bluebower headers/notes cleanly
         listEl.querySelectorAll('.bb-group-header, .bb-group-note-li').forEach(el => el.remove());
 
         const store = pState.presetData.promptGroups;
@@ -366,9 +392,9 @@ function enhancePromptList() {
             if (!id) continue;
             const meta = store.items[id] || { groupId: null, starred: false, note: '' };
             const enabled = !li.classList.contains('completion_prompt_manager_prompt_disabled');
-            const nameEl = li.querySelector('.completion_prompt_manager_prompt_name');
-            const nameText = (nameEl?.textContent || id).trim();
-            const tokenVal = Number(li.querySelector('.prompt_manager_prompt_tokens')?.dataset?.pmTokens || 0);
+            const nameText = getCleanPromptName(li, id);
+            const rawTok = Number.parseInt(li.querySelector('.prompt_manager_prompt_tokens')?.dataset?.pmTokens || '', 10);
+            const tokenVal = Number.isFinite(rawTok) && rawTok > 0 ? rawTok : 0;
             const group = meta.groupId && groupMap.has(meta.groupId) ? groupMap.get(meta.groupId) : null;
 
             const matchFilter = (pState.filter !== 'enabled' || enabled)
@@ -381,7 +407,7 @@ function enhancePromptList() {
             li.classList.toggle('bb-filter-hidden', !matchFilter);
             li.classList.remove('bb-collapsed-hidden');
 
-            decoratePromptItem(li, id, nameText, meta, store.groups);
+            decoratePromptItem(li, id, meta, group);
 
             if (matchFilter && meta.starred) {
                 starred.push({ id, name: nameText, enabled, tokenVal, note: meta.note });
@@ -394,19 +420,30 @@ function enhancePromptList() {
             }
         }
 
-        // Render Starred Mirror above list
         renderStarredMirror(starred, forceExpand);
 
-        // Re-append groups + their native <li> elements in order
         const frag = document.createDocumentFragment();
-        const headerLi = listEl.querySelector('.completion_prompt_manager_header');
-        if (headerLi) frag.appendChild(headerLi);
+        const headLi = listEl.querySelector('.completion_prompt_manager_list_head');
+        const sepLi = listEl.querySelector('.completion_prompt_manager_list_separator');
+        if (headLi) frag.appendChild(headLi);
+        if (sepLi) frag.appendChild(sepLi);
+
+        // Unlocked mode: show items in true original prompt_order sequence for safe native drag-and-drop!
+        if (!locked) {
+            for (const li of nativeItems) {
+                frag.appendChild(li);
+            }
+            listEl.appendChild(frag);
+            return;
+        }
+
+        const hiddenTail = [];
 
         store.groups.forEach((group, idx) => {
             const entries = itemsByGroup.get(group.id) || [];
             const visibleEntries = entries.filter(e => e.matchFilter);
             if (forceExpand && !visibleEntries.length && (!pState.query || !group.name.toLowerCase().includes(pState.query))) {
-                for (const e of entries) frag.appendChild(e.li);
+                for (const e of entries) hiddenTail.push(e.li);
                 return;
             }
 
@@ -415,7 +452,7 @@ function enhancePromptList() {
             const isCollapsed = group.collapsed && !forceExpand;
 
             const gHeader = document.createElement('li');
-            gHeader.className = `bb-group-header ${group.enabled ? '' : 'is-group-disabled'}`;
+            gHeader.className = `bb-group-header ${enabledCount > 0 ? '' : 'is-group-disabled'}`;
             gHeader.dataset.bbGroupId = group.id;
             gHeader.innerHTML = `
                 <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
@@ -449,7 +486,6 @@ function enhancePromptList() {
             }
         });
 
-        // Ungrouped section
         if (ungrouped.length) {
             const visibleUngrouped = ungrouped.filter(e => e.matchFilter);
             const isCollapsed = pState.ungroupedCollapsed && !forceExpand;
@@ -470,6 +506,10 @@ function enhancePromptList() {
             }
         }
 
+        for (const li of hiddenTail) {
+            frag.appendChild(li);
+        }
+
         listEl.appendChild(frag);
     } finally {
         pState.listObserver?.observe(listEl, { childList: true });
@@ -477,7 +517,7 @@ function enhancePromptList() {
 }
 
 function renderStarredMirror(starred, forceExpand) {
-    const box = document.getElementById('bb_prompt_starred');
+    const box = pState.toolbarEl?.querySelector('#bb_prompt_starred');
     if (!box) return;
     if (!starred.length) {
         box.innerHTML = '';
@@ -498,7 +538,7 @@ function renderStarredMirror(starred, forceExpand) {
                         <span class="bb-starred-name" title="${esc(s.name)}">${esc(s.name)}</span>
                         ${s.note ? `<span class="bb-starred-note">${esc(s.note)}</span>` : ''}
                         ${s.tokenVal > 0 ? `<span class="bb-token-mini">${formatTokens(s.tokenVal)}</span>` : ''}
-                        <button type="button" class="bb-mirror-toggle menu_button bb-btn-sm" data-id="${esc(s.id)}">
+                        <button type="button" class="bb-mirror-toggle menu_button bb-btn-sm bb-drawer-btn" data-id="${esc(s.id)}">
                             ${s.enabled ? '已开启' : '已关闭'}
                         </button>
                     </div>
@@ -509,14 +549,15 @@ function renderStarredMirror(starred, forceExpand) {
 }
 
 /**
- * Injects star, note, move-select or batch checkbox onto a native prompt `<li>`.
+ * Injects compact star & item-settings icons inside `.prompt_manager_prompt_controls` using `<div>`
+ * so SillyTavern's `span span span` CSS rules never crush or distort them.
  */
-function decoratePromptItem(li, id, nameText, meta, groups) {
+function decoratePromptItem(li, id, meta, group) {
     const controls = li.querySelector('.prompt_manager_prompt_controls');
     const host = controls || li;
     let extras = host.querySelector(':scope > .bb-item-extras');
     if (!extras) {
-        extras = document.createElement('span');
+        extras = document.createElement('div');
         extras.className = 'bb-item-extras';
         if (controls) {
             controls.prepend(extras);
@@ -525,49 +566,64 @@ function decoratePromptItem(li, id, nameText, meta, groups) {
         }
     }
 
-    const groupOptions = [
-        `<option value="" ${!meta?.groupId ? 'selected' : ''}>未分组</option>`,
-        ...groups.map(g => `<option value="${esc(g.id)}" ${meta?.groupId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`),
-    ].join('');
+    const locked = Boolean(pState.presetData.settings?.lockPromptOrder ?? true);
+    const tipParts = [];
+    if (group) tipParts.push(`分组：${group.name}`);
+    if (meta?.note) tipParts.push(`备注：${meta.note}`);
+    const noteTitle = tipParts.length ? tipParts.join(' | ') : '设置所属分组与备注';
 
     extras.innerHTML = `
         ${pState.batchMode ? `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" ${pState.selectedIds.has(id) ? 'checked' : ''} />` : ''}
-        <button type="button" class="bb-star-btn ${meta?.starred ? 'is-starred' : ''}" data-bb-item-act="star" data-id="${esc(id)}" title="星标置顶"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
-        <button type="button" class="bb-mini-btn bb-note-btn ${meta?.note ? 'has-note' : ''}" data-bb-item-act="note" data-id="${esc(id)}" title="${meta?.note ? esc(meta.note) : '添加备注'}"><i class="fa-regular fa-note-sticky"></i></button>
-        ${!pState.batchMode ? `<select class="bb-move-select" data-id="${esc(id)}" title="移动到分组">${groupOptions}</select>` : ''}
+        <button type="button" class="bb-icon-action ${meta?.starred ? 'is-starred' : ''}" data-bb-item-act="star" data-id="${esc(id)}" title="星标置顶"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
+        <button type="button" class="bb-icon-action ${meta?.note ? 'has-note' : ''}" data-bb-item-act="edit-item" data-id="${esc(id)}" title="${esc(noteTitle)}"><i class="fa-regular fa-note-sticky"></i></button>
     `;
 
-    // Inline note display under prompt name
     const nameEl = li.querySelector('.completion_prompt_manager_prompt_name');
     if (nameEl) {
+        // Show subtle group tag when in unlocked raw-order view, or note tag if present
         let noteTag = nameEl.querySelector('.bb-inline-note-tag');
-        if (meta?.note) {
+        const tagText = !locked && group ? `[${group.name}] ${meta?.note || ''}`.trim() : (meta?.note || '');
+        if (tagText) {
             if (!noteTag) {
-                noteTag = document.createElement('span');
+                noteTag = document.createElement('small');
                 noteTag.className = 'bb-inline-note-tag';
                 nameEl.appendChild(noteTag);
             }
-            noteTag.textContent = meta.note;
-            noteTag.title = meta.note;
+            noteTag.textContent = tagText;
+            noteTag.title = tagText;
         } else if (noteTag) {
             noteTag.remove();
         }
     }
 }
 
-/**
- * Binds delegated interactions on a `#completion_prompt_manager_list` instance if not yet bound.
- * @param {HTMLElement} listEl
- */
+function bindContainerIfNeeded(container) {
+    if (!container || pState.boundContainerEl === container) return;
+    pState.boundContainerEl = container;
+    pState.containerObserver?.disconnect();
+    pState.containerObserver = new MutationObserver(() => {
+        scheduleEnhancePromptList();
+    });
+    pState.containerObserver.observe(container, { childList: true });
+}
+
 function bindListIfNeeded(listEl) {
     if (!listEl || pState.boundListEl === listEl) return;
     pState.boundListEl = listEl;
 
-    if (pState.listObserver) {
-        pState.listObserver.disconnect();
+    pState.listObserver?.disconnect();
+
+    // Update cached original indices after user drags in unlocked raw-order mode
+    const $ = window.jQuery;
+    if ($) {
+        $(listEl).on('sortstop.bluebower', () => {
+            if (pState.presetData?.settings?.lockPromptOrder) return;
+            Array.from(listEl.children)
+                .filter(el => el.classList.contains('completion_prompt_manager_prompt'))
+                .forEach((li, i) => { li.dataset.bbOrigIdx = String(i); });
+        });
     }
 
-    // Delegated click for group headers, item extras, and exclusive group mutual exclusion
     listEl.addEventListener('click', async (e) => {
         const groupHeader = e.target.closest('.bb-group-header');
         if (groupHeader) {
@@ -635,12 +691,18 @@ function bindListIfNeeded(listEl) {
                 store.items[id].starred = !store.items[id].starred;
                 await savePresetData(pState.presetData);
                 scheduleEnhancePromptList();
-            } else if (itemActBtn.dataset.bbItemAct === 'note') {
+            } else if (itemActBtn.dataset.bbItemAct === 'edit-item') {
                 const li = itemActBtn.closest('.completion_prompt_manager_prompt');
-                const itemName = li?.querySelector('.completion_prompt_manager_prompt_name')?.textContent?.trim() || id;
-                const nextNote = await openNoteDialog({ itemName, note: store.items[id].note });
-                if (nextNote !== null) {
-                    store.items[id].note = nextNote;
+                const itemName = li ? getCleanPromptName(li, id) : id;
+                const res = await openItemDialog({
+                    itemName,
+                    note: store.items[id].note,
+                    groupId: store.items[id].groupId,
+                    groups: store.groups,
+                });
+                if (res !== null) {
+                    store.items[id].note = res.note;
+                    store.items[id].groupId = res.groupId;
                     await savePresetData(pState.presetData);
                     scheduleEnhancePromptList();
                 }
@@ -648,7 +710,6 @@ function bindListIfNeeded(listEl) {
             return;
         }
 
-        // Exclusive group enforcement when user clicks native prompt toggle
         const nativeToggle = e.target.closest('.prompt-manager-toggle-action');
         if (nativeToggle) {
             const li = nativeToggle.closest('.completion_prompt_manager_prompt');
@@ -660,7 +721,6 @@ function bindListIfNeeded(listEl) {
                 const gid = store.items[id]?.groupId;
                 const group = gid ? store.groups.find(g => g.id === gid) : null;
                 if (group?.exclusive) {
-                    // After native handler toggles this item ON, disable siblings
                     setTimeout(() => {
                         const siblings = Array.from(listEl.querySelectorAll('.completion_prompt_manager_prompt'))
                             .map(el => el.dataset.pmIdentifier)
@@ -684,15 +744,6 @@ function bindListIfNeeded(listEl) {
             if (target.checked) pState.selectedIds.add(id);
             else pState.selectedIds.delete(id);
             renderBatchDrawer();
-            return;
-        }
-
-        if (target.classList.contains('bb-move-select')) {
-            const id = target.dataset.id;
-            if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
-            store.items[id].groupId = target.value || null;
-            await savePresetData(pState.presetData);
-            scheduleEnhancePromptList();
             return;
         }
 
@@ -735,29 +786,18 @@ function bindListIfNeeded(listEl) {
 }
 
 export function initPromptEnhancer() {
-    if (pState.initialized) return;
     const container = document.getElementById('completion_prompt_manager');
     if (!container) return;
-    pState.initialized = true;
-
-    loadCurrentPresetState();
-
-    // Watch #completion_prompt_manager itself because PromptManager.renderPromptManager()
-    // replaces its entire innerHTML (and #completion_prompt_manager_list) on chat/preset changes.
-    pState.containerObserver = new MutationObserver(() => {
-        scheduleEnhancePromptList();
-    });
-    pState.containerObserver.observe(container, { childList: true });
-
+    if (!pState.initialized) {
+        pState.initialized = true;
+        loadCurrentPresetState();
+    }
+    bindContainerIfNeeded(container);
     scheduleEnhancePromptList();
 }
 
 export function onPromptPresetChanged() {
     pState.presetData = null;
-    if (pState.initialized) {
-        loadCurrentPresetState();
-        scheduleEnhancePromptList();
-    } else {
-        initPromptEnhancer();
-    }
+    loadCurrentPresetState();
+    initPromptEnhancer();
 }

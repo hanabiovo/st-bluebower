@@ -1,5 +1,5 @@
 /**
- * Lightweight inline modal dialog for creating/editing groups and item notes.
+ * Lightweight inline modal dialog for creating/editing groups and item settings.
  */
 
 let dialogBackdrop = null;
@@ -50,16 +50,25 @@ export function openGroupDialog({ mode, group = null }) {
 }
 
 /**
- * Opens a small centered dialog for editing an item's personal note.
- * @param {{ itemName: string, note?: string }} options
- * @returns {Promise<string | null>}
+ * Opens a small centered dialog for editing an item's group assignment and personal note.
+ * @param {{ itemName: string, note?: string, groupId?: string | null, groups?: Array }} options
+ * @returns {Promise<{ note: string, groupId: string | null } | null>}
  */
-export function openNoteDialog({ itemName, note = '' }) {
+export function openItemDialog({ itemName, note = '', groupId = null, groups = [] }) {
+    const groupOptions = [
+        `<option value="" ${!groupId ? 'selected' : ''}>未分组</option>`,
+        ...groups.map(g => `<option value="${esc(g.id)}" ${groupId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`),
+    ].join('');
+
     return openFormDialog(`
         <form class="bb-dialog-card">
-            <div class="bb-dialog-title">条目备注 · ${esc(itemName)}</div>
+            <div class="bb-dialog-title">条目设置 · ${esc(itemName)}</div>
             <label class="bb-field">
-                <span>备注内容（留空则清除）</span>
+                <span>所属分组</span>
+                <select name="groupId" class="text_pole">${groupOptions}</select>
+            </label>
+            <label class="bb-field">
+                <span>个人备注（留空则清除）</span>
                 <input type="text" name="note" class="text_pole" maxlength="120" value="${esc(note)}" placeholder="写点方便自己识别的说明..." />
             </label>
             <div class="bb-dialog-footer">
@@ -67,7 +76,10 @@ export function openNoteDialog({ itemName, note = '' }) {
                 <button type="submit" class="menu_button bb-btn-primary">保存</button>
             </div>
         </form>
-    `, (fd) => String(fd.get('note') || '').trim());
+    `, (fd) => ({
+        groupId: String(fd.get('groupId') || '') || null,
+        note: String(fd.get('note') || '').trim(),
+    }));
 }
 
 function openFormDialog(html, extractor) {

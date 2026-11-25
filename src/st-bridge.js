@@ -7,22 +7,23 @@ const tokenCache = new Map();
 
 /**
  * Resolves the active prompt_order list from `chatCompletionSettings`.
- * @returns {{ characterId: string | number, order: Array<{ identifier: string, enabled: boolean }> } | null}
+ * OpenAI Chat Completion in SillyTavern uses global strategy (`dummyId: 100001`) by default.
+ * @returns {{ character_id: string | number, order: Array<{ identifier: string, enabled: boolean }> } | null}
  */
 export function getActivePromptOrderEntry() {
     const ctx = window.SillyTavern?.getContext?.();
     const settings = ctx?.chatCompletionSettings;
     if (!settings || !Array.isArray(settings.prompt_order)) return null;
 
+    for (const dummyId of GLOBAL_ORDER_IDS) {
+        const globalOrder = settings.prompt_order.find(o => Number(o.character_id) === dummyId);
+        if (globalOrder && Array.isArray(globalOrder.order)) return globalOrder;
+    }
+
     const charId = ctx.characterId;
     if (charId !== undefined && charId !== null) {
         const charOrder = settings.prompt_order.find(o => String(o.character_id) === String(charId));
         if (charOrder && Array.isArray(charOrder.order)) return charOrder;
-    }
-
-    for (const dummyId of GLOBAL_ORDER_IDS) {
-        const globalOrder = settings.prompt_order.find(o => Number(o.character_id) === dummyId);
-        if (globalOrder && Array.isArray(globalOrder.order)) return globalOrder;
     }
 
     return settings.prompt_order.find(o => Array.isArray(o?.order)) ?? null;

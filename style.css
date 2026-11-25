@@ -7,30 +7,56 @@
 
 /* Lock drag handles when prompt order is locked */
 #completion_prompt_manager_list.bb-order-locked .drag-handle {
-    opacity: 0.25;
-    pointer-events: none;
-    cursor: default;
+    display: none !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.bb-order-locked .completion_prompt_manager_prompt {
+    padding-left: 0.5em !important;
+    cursor: default !important;
+}
+
+/* Expand native prompt item Column 2 from fixed 80px to auto so Bluebower icons fit without wrapping/overlapping */
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt {
+    grid-template-columns: minmax(0, 1fr) auto 45px !important;
+    column-gap: 6px;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .prompt_manager_prompt_controls {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 4px !important;
+    width: auto !important;
+}
+
+/* Center-align regex script rows so injected icons and badges sit flush with native controls */
+#regex_container .regex-script-label {
+    align-items: center;
+    padding: 3px 6px;
 }
 
 /* Native-integrated toolbar (linked to SillyTavern global CSS variables) */
 .bb-native-toolbar {
     display: flex;
     flex-direction: column;
-    gap: 7px;
-    margin: 6px 0 10px;
+    gap: 6px;
+    margin: 6px 0 8px;
     padding: 8px 10px;
+    width: 100%;
+    box-sizing: border-box;
     border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.28));
     border-radius: 8px;
     background: color-mix(in srgb, var(--SmartThemeBlurTintColor, transparent) 85%, var(--SmartThemeBodyColor, currentColor) 5%);
     color: var(--SmartThemeBodyColor, inherit);
-    font-size: 13px;
+    font-size: calc(var(--mainFontSize, 14px) * 0.92);
 }
 
 .bb-toolbar-row {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;
+    width: 100%;
+    flex-wrap: nowrap;
 }
 
 .bb-brand-badge {
@@ -40,16 +66,16 @@
     color: #3b82f6;
     font-size: 1.08em;
     flex-shrink: 0;
-    padding: 0 3px;
+    width: 22px;
 }
 
 .bb-toolbar-row .bb-search {
-    flex: 1 1 170px;
-    min-width: 130px;
+    flex: 1 1 0;
+    min-width: 90px;
     height: 28px !important;
     margin: 0 !important;
-    padding: 4px 9px !important;
-    font-size: 0.9em !important;
+    padding: 0 9px !important;
+    font-size: 0.92em !important;
 }
 
 .bb-pill-group {
@@ -68,8 +94,8 @@
     background: color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 6%, transparent);
     color: var(--SmartThemeBodyColor, inherit);
     border-radius: 999px;
-    padding: 0 11px;
-    font-size: 0.84em;
+    padding: 0 10px;
+    font-size: 0.86em;
     white-space: nowrap;
     cursor: pointer;
     transition: background 0.15s ease, border-color 0.15s ease;
@@ -93,20 +119,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    width: 100%;
     flex-wrap: nowrap;
-}
-
-.bb-toolbar-actions > .menu_button.bb-btn-sm,
-.bb-toolbar-actions > .bb-regex-target-scope {
-    flex: 1 1 0;
-    min-width: 0 !important;
-    height: 28px !important;
-}
-
-.bb-toolbar-actions > .bb-settings-btn {
-    flex: 0 0 32px !important;
-    min-width: 32px !important;
-    padding: 0 !important;
 }
 
 .bb-native-toolbar .menu_button.bb-btn-sm,
@@ -116,15 +130,36 @@
     align-items: center !important;
     justify-content: center !important;
     gap: 5px !important;
-    width: auto !important;
-    min-width: 0 !important;
-    white-space: nowrap !important;
-    padding: 0 10px !important;
     height: 28px !important;
-    font-size: 0.84em !important;
+    padding: 0 10px !important;
     margin: 0 !important;
+    font-size: 0.86em !important;
     line-height: 1 !important;
+    white-space: nowrap !important;
     border-radius: 6px !important;
+    box-sizing: border-box !important;
+}
+
+.bb-toolbar-actions > .menu_button.bb-btn-sm,
+.bb-toolbar-actions > .bb-regex-target-scope {
+    flex: 1 1 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    height: 28px !important;
+}
+
+.bb-toolbar-actions > .menu_button.bb-settings-btn {
+    flex: 0 0 30px !important;
+    width: 30px !important;
+    min-width: 30px !important;
+    padding: 0 !important;
+}
+
+/* Buttons inside drawers and starred mirror keep natural width */
+.bb-native-toolbar .menu_button.bb-drawer-btn {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: max-content !important;
 }
 
 .bb-btn-primary {
@@ -134,17 +169,16 @@
 }
 
 .bb-regex-target-scope {
-    height: 28px !important;
     margin: 0 !important;
-    padding: 0 8px !important;
-    font-size: 0.84em !important;
+    padding: 0 6px !important;
+    font-size: 0.86em !important;
 }
 
 .bb-inline-notice {
-    flex-basis: 100%;
-    font-size: 0.8em;
+    font-size: 0.82em;
     color: var(--SmartThemeQuoteColor, #3b82f6);
     display: none;
+    padding: 1px 2px;
 }
 
 .bb-inline-notice.is-visible {
@@ -157,11 +191,11 @@
     display: none;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    padding-top: 7px;
+    gap: 6px;
+    padding-top: 6px;
     border-top: 1px dashed var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.25));
     flex-wrap: wrap;
-    font-size: 0.86em;
+    font-size: 0.88em;
 }
 
 .bb-settings-drawer.is-open,
@@ -176,13 +210,17 @@
     cursor: pointer;
 }
 
+.bb-batch-count {
+    white-space: nowrap;
+}
+
 .bb-batch-target {
-    flex: 1 1 140px;
-    max-width: 240px;
+    flex: 1 1 120px;
+    min-width: 100px;
     height: 28px !important;
     margin: 0 !important;
     padding: 0 8px !important;
-    font-size: 0.88em !important;
+    font-size: 0.9em !important;
 }
 
 /* Starred pinned mirror */
@@ -201,7 +239,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 10px;
+    padding: 5px 9px;
     cursor: pointer;
     user-select: none;
     font-weight: 600;
@@ -222,7 +260,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 10px;
+    padding: 4px 9px;
     border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 8%, transparent);
 }
 
@@ -243,10 +281,10 @@
 }
 
 .bb-starred-note {
-    font-size: 0.8em;
+    font-size: 0.82em;
     color: var(--SmartThemeEmColor, inherit);
-    opacity: 0.8;
-    max-width: 140px;
+    opacity: 0.85;
+    max-width: 130px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -258,10 +296,11 @@
     color: var(--SmartThemeQuoteColor, #eab308);
     cursor: pointer;
     padding: 0 2px;
+    flex-shrink: 0;
 }
 
 /* Group header inserted directly in native lists (override ST li grid layout) */
-#completion_prompt_manager_list > li.bb-group-header,
+#completion_prompt_manager #completion_prompt_manager_list > li.bb-group-header,
 .bb-group-header {
     list-style: none !important;
     display: flex !important;
@@ -273,7 +312,7 @@
     gap: 6px !important;
     width: 100% !important;
     box-sizing: border-box !important;
-    margin: 7px 0 3px !important;
+    margin: 6px 0 3px !important;
     padding: 6px 9px !important;
     border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.28)) !important;
     border-radius: 7px !important;
@@ -283,7 +322,7 @@
     user-select: none;
 }
 
-#completion_prompt_manager_list > li.bb-group-header:hover,
+#completion_prompt_manager #completion_prompt_manager_list > li.bb-group-header:hover,
 .bb-group-header:hover {
     background: color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 13%, transparent) !important;
 }
@@ -311,7 +350,7 @@
 .bb-count-badge,
 .bb-token-badge,
 .bb-token-mini {
-    font-size: 0.76em;
+    font-size: 0.78em;
     padding: 1px 6px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 10%, transparent);
@@ -332,49 +371,70 @@
     flex-shrink: 0;
 }
 
-#completion_prompt_manager_list > li.bb-group-note-li,
+#completion_prompt_manager #completion_prompt_manager_list > li.bb-group-note-li,
 .bb-group-note-li {
     list-style: none !important;
     display: block !important;
     grid-template-columns: none !important;
     width: 100% !important;
+    box-sizing: border-box !important;
     padding: 2px 10px 4px 24px !important;
-    font-size: 0.8em;
+    margin: 0 !important;
+    font-size: 0.82em;
     color: var(--SmartThemeEmColor, inherit);
     opacity: 0.85;
 }
 
-/* Per-item inline decorations */
+/* Per-item inline decorations (uses <div> and <button> so ST span rules never apply) */
 .bb-item-extras {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    margin-right: 4px;
+    gap: 3px;
+    margin-right: 3px;
     flex-shrink: 0;
 }
 
-.bb-star-btn {
-    border: none;
-    background: transparent;
-    color: var(--SmartThemeEmColor, inherit);
+.bb-batch-chk {
+    margin: 0 2px 0 0 !important;
     cursor: pointer;
-    padding: 2px 3px;
-    opacity: 0.55;
-    font-size: 0.92em;
 }
 
-.bb-star-btn:hover,
-.bb-star-btn.is-starred {
+.bb-icon-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--SmartThemeBodyColor, inherit);
+    opacity: 0.42;
+    font-size: calc(var(--mainFontSize, 14px) * 0.92);
+    cursor: pointer;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.bb-icon-action:hover {
+    opacity: 1;
+}
+
+.bb-icon-action.is-starred {
     opacity: 1;
     color: var(--SmartThemeQuoteColor, #eab308);
+}
+
+.bb-icon-action.has-note {
+    opacity: 0.95;
+    color: var(--SmartThemeQuoteColor, #3b82f6);
 }
 
 .bb-mini-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 23px;
+    height: 23px;
     border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.25));
     background: color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 6%, transparent);
     color: var(--SmartThemeBodyColor, inherit);
@@ -383,6 +443,7 @@
     font-size: 0.76em;
     cursor: pointer;
     line-height: 1;
+    flex-shrink: 0;
 }
 
 .bb-mini-btn:disabled {
@@ -390,44 +451,25 @@
     cursor: not-allowed;
 }
 
-.bb-note-btn {
-    opacity: 0.6;
-}
-
-.bb-note-btn.has-note,
-.bb-note-btn:hover {
-    opacity: 1;
-}
-
 .bb-danger-btn:hover:not(:disabled) {
     background: rgba(239, 68, 68, 0.22);
     border-color: rgba(239, 68, 68, 0.55);
 }
 
-.bb-move-select {
-    max-width: 92px;
-    height: 24px;
-    font-size: 0.76em;
-    padding: 0 4px;
-    border-radius: 5px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.28));
-    background: var(--SmartThemeBlurTintColor, transparent);
-    color: var(--SmartThemeBodyColor, inherit);
-}
-
 .bb-inline-note-tag {
     display: inline-block;
     margin-left: 6px;
-    font-size: 0.76em;
+    font-size: 0.78em;
     color: var(--SmartThemeEmColor, inherit);
     opacity: 0.85;
     font-weight: normal;
+    vertical-align: baseline;
 }
 
 /* Badges */
 .bb-tag {
     display: inline-block;
-    font-size: 0.72em;
+    font-size: 0.74em;
     padding: 1px 6px;
     border-radius: 4px;
     margin-left: 5px;
@@ -435,6 +477,7 @@
     white-space: nowrap;
     background: color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 10%, transparent);
     color: var(--SmartThemeBodyColor, inherit);
+    flex-shrink: 0;
 }
 
 .bb-tag-exclusive {
@@ -529,6 +572,9 @@
 .bb-dialog-title {
     font-weight: 600;
     font-size: 1em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .bb-field {
@@ -538,9 +584,13 @@
     font-size: 0.86em;
 }
 
-.bb-field input {
+.bb-field input,
+.bb-field select {
+    width: 100% !important;
+    box-sizing: border-box !important;
     margin: 0 !important;
     padding: 6px 8px !important;
+    height: 32px !important;
 }
 
 .bb-field-check {
@@ -573,9 +623,9 @@
     border-radius: 6px !important;
 }
 
-@media (max-width: 600px) {
-    .bb-move-select {
-        max-width: 72px;
+@media (max-width: 480px) {
+    .bb-toolbar-row {
+        flex-wrap: wrap;
     }
 
     .bb-group-controls .bb-mini-btn[data-bb-act="up"],

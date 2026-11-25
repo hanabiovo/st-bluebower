@@ -1,4 +1,4 @@
-import { openGroupDialog, openNoteDialog } from './dialog.js';
+import { openGroupDialog, openItemDialog } from './dialog.js';
 import {
     getGlobalSettings,
     loadPresetData,
@@ -10,20 +10,23 @@ import {
 import { batchSetRegexEnabled, getRegexScopeInfo } from './st-bridge.js';
 
 const CONTAINERS = [
-    { id: 'saved_preset_scripts', origin: 'preset', storeScope: 'preset' },
-    { id: 'saved_scoped_scripts', origin: 'scoped', storeScope: 'global' },
     { id: 'saved_regex_scripts', origin: 'global', storeScope: 'global' },
+    { id: 'saved_preset_scripts', origin: 'preset', storeScope: 'preset' },
+    { id: 'saved_scoped_scripts', origin: 'scoped', storeScope: 'scoped' },
 ];
 
 const rState = {
     initialized: false,
+    rootObserver: null,
     observers: [],
+    boundRootEl: null,
+    toolbarEl: null,
     rafId: null,
     filter: 'all', // 'all' | 'enabled' | 'starred'
     query: '',
     batchMode: false,
     selectedItems: new Map(), // id -> { origin, storeScope }
-    ungroupedCollapsed: { preset: false, global: false, scoped: false },
+    ungroupedCollapsed: { global: false, preset: false, scoped: false },
     presetData: null,
     searchTimer: null,
     noticeTimer: null,
@@ -38,18 +41,21 @@ function esc(str) {
 }
 
 function showNotice(text) {
-    const el = document.querySelector('#bb_regex_toolbar .bb-inline-notice');
+    const el = rState.toolbarEl?.querySelector('.bb-inline-notice');
     if (!el) return;
     el.textContent = text;
     el.classList.add('is-visible');
     clearTimeout(rState.noticeTimer);
-    rState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2200);
+    rState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2400);
 }
 
 function getStore(storeScope) {
     if (storeScope === 'preset') {
         if (!rState.presetData) rState.presetData = loadPresetData().data;
         return rState.presetData.regexGroups;
+    }
+    if (storeScope === 'scoped') {
+        return getGlobalSettings().scopedRegexGroups;
     }
     return getGlobalSettings().globalRegexGroups;
 }
@@ -62,12 +68,6 @@ async function persistStore(storeScope) {
     }
 }
 
-/**
- * Looks up the live script metadata (markdownOnly/promptOnly) from SillyTavern context.
- * @param {string} id
- * @param {'preset' | 'scoped' | 'global'} origin
- * @returns {Object | null}
- */
 function findRawScript(id, origin) {
     const ctx = window.SillyTavern?.getContext?.();
     if (!ctx) return null;
@@ -83,42 +83,58 @@ function findRawScript(id, origin) {
     return arr.find(s => String(s?.id) === String(id)) ?? null;
 }
 
-function ensureRegexToolbar(regexContainer) {
-    if (document.getElementById('bb_regex_toolbar')) return;
-    const content = regexContainer.querySelector('.inline-drawer-content') || regexContainer;
-    const toolbar = document.createElement('div');
-    toolbar.id = 'bb_regex_toolbar';
-    toolbar.className = 'bb-native-toolbar bb-regex-toolbar';
-    toolbar.innerHTML = `
-        <div class="bb-toolbar-row">
-            <span class="bb-brand-badge" title="园丁鸟 (Bluebower)"><i class="fa-solid fa-dove"></i></span>
-            <input type="search" class="bb-search text_pole" placeholder="搜索正则脚本、分组或备注..." />
-            <div class="bb-pill-group">
-                <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
-                <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
-                <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
-            </div>
-        </div>
-        <div class="bb-toolbar-row bb-toolbar-actions">
-            <select class="bb-regex-target-scope text_pole" title="新建分组的归属范围">
-                <option value="preset">预设正则组</option>
-                <option value="global">全局/角色组</option>
-            </select>
-            <button type="button" class="menu_button bb-btn-sm bb-new-group-btn"><i class="fa-solid fa-plus"></i><span>分组</span></button>
-            <button type="button" class="menu_button bb-btn-sm bb-batch-btn"><i class="fa-solid fa-list-check"></i><span>批量整理</span></button>
-            <span class="bb-inline-notice"></span>
-        </div>
-        <div class="bb-batch-drawer" id="bb_regex_batch"></div>
-    `;
+/**
+ * Reads clean script name without injected scope/note badges.
+ * @param {HTMLElement} row
+ * @returns {string}
+ */
+function getCleanRegexName(row) {
+    if (row.dataset.bbScriptName) return row.dataset.bbScriptName;
+    const nameEl = row.querySelector('.regex_script_name');
+    const clean = (nameEl?.getAttribute('title') || nameEl?.textContent || row.id || '').trim();
+    row.dataset.bbScriptName = clean;
+    return clean;
+}
 
-    const firstList = content.querySelector('#saved_preset_scripts, #saved_scoped_scripts, #saved_regex_scripts');
-    if (firstList?.parentNode) {
-        firstList.parentNode.insertBefore(toolbar, firstList);
-    } else {
-        content.prepend(toolbar);
+function ensureRegexToolbar(regexContainer) {
+    const content = regexContainer.querySelector('.inline-drawer-content') || regexContainer;
+    const anchor = content.querySelector('#global_scripts_block') || content.firstElementChild;
+
+    if (!rState.toolbarEl) {
+        const toolbar = document.createElement('div');
+        toolbar.id = 'bb_regex_toolbar';
+        toolbar.className = 'bb-native-toolbar bb-regex-toolbar';
+        toolbar.innerHTML = `
+            <div class="bb-toolbar-row">
+                <span class="bb-brand-badge" title="园丁鸟 (Bluebower)"><i class="fa-solid fa-dove"></i></span>
+                <input type="search" class="bb-search text_pole" placeholder="搜索正则脚本、分组或备注..." />
+                <div class="bb-pill-group">
+                    <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
+                    <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
+                    <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
+                </div>
+            </div>
+            <div class="bb-toolbar-row bb-toolbar-actions">
+                <select class="bb-regex-target-scope text_pole" title="新建分组的归属范围">
+                    <option value="global">全局正则组</option>
+                    <option value="preset">预设正则组</option>
+                    <option value="scoped">角色正则组</option>
+                </select>
+                <button type="button" class="menu_button bb-btn-sm bb-new-group-btn"><i class="fa-solid fa-plus"></i><span>分组</span></button>
+                <button type="button" class="menu_button bb-btn-sm bb-batch-btn"><i class="fa-solid fa-list-check"></i><span>批量整理</span></button>
+            </div>
+            <div class="bb-inline-notice"></div>
+            <div class="bb-batch-drawer" id="bb_regex_batch"></div>
+        `;
+        bindRegexToolbarEvents(toolbar);
+        rState.toolbarEl = toolbar;
     }
 
-    bindRegexToolbarEvents(toolbar);
+    if (anchor && rState.toolbarEl.nextElementSibling !== anchor) {
+        anchor.parentNode.insertBefore(rState.toolbarEl, anchor);
+    } else if (!anchor && !rState.toolbarEl.isConnected) {
+        content.prepend(rState.toolbarEl);
+    }
 }
 
 function bindRegexToolbarEvents(toolbar) {
@@ -140,7 +156,7 @@ function bindRegexToolbarEvents(toolbar) {
     });
 
     toolbar.querySelector('.bb-new-group-btn').addEventListener('click', async () => {
-        const storeScope = toolbar.querySelector('.bb-regex-target-scope')?.value || 'preset';
+        const storeScope = toolbar.querySelector('.bb-regex-target-scope')?.value || 'global';
         const res = await openGroupDialog({ mode: 'create' });
         if (!res) return;
         const store = getStore(storeScope);
@@ -172,10 +188,19 @@ function bindRegexToolbarEvents(toolbar) {
         if (action === 'clear') {
             rState.selectedItems.clear();
             scheduleEnhanceRegexLists();
+        } else if (action === 'select-all') {
+            for (const cfg of CONTAINERS) {
+                const listEl = document.getElementById(cfg.id);
+                listEl?.querySelectorAll('.regex-script-label:not(.bb-collapsed-hidden):not(.bb-filter-hidden)').forEach(row => {
+                    if (row.id) rState.selectedItems.set(row.id, { origin: cfg.origin, storeScope: cfg.storeScope });
+                });
+            }
+            scheduleEnhanceRegexLists();
         } else if (action === 'apply') {
             const targetVal = toolbar.querySelector('.bb-batch-target')?.value || '';
             const [targetScope, targetGid] = targetVal ? targetVal.split(':') : ['', ''];
             const dirtyScopes = new Set();
+            let movedCount = 0;
 
             for (const [id, info] of rState.selectedItems.entries()) {
                 const itemScope = info.storeScope;
@@ -184,9 +209,11 @@ function bindRegexToolbarEvents(toolbar) {
                 if (!targetGid) {
                     store.items[id].groupId = null;
                     dirtyScopes.add(itemScope);
+                    movedCount++;
                 } else if (targetScope === itemScope) {
                     store.items[id].groupId = targetGid;
                     dirtyScopes.add(itemScope);
+                    movedCount++;
                 }
             }
 
@@ -195,13 +222,13 @@ function bindRegexToolbarEvents(toolbar) {
             toolbar.querySelector('.bb-batch-btn').classList.remove('is-active');
             for (const s of dirtyScopes) await persistStore(s);
             scheduleEnhanceRegexLists();
-            showNotice('批量移动完成（仅移动匹配作用域的条目）');
+            showNotice(movedCount > 0 ? `已移动 ${movedCount} 项正则` : '所选正则与目标分组不在同一作用域');
         }
     });
 }
 
 function renderBatchDrawer() {
-    const el = document.getElementById('bb_regex_batch');
+    const el = rState.toolbarEl?.querySelector('#bb_regex_batch');
     if (!el) return;
     if (!rState.batchMode) {
         el.innerHTML = '';
@@ -209,20 +236,23 @@ function renderBatchDrawer() {
         return;
     }
 
-    const presetGroups = getStore('preset').groups;
     const globalGroups = getStore('global').groups;
+    const presetGroups = getStore('preset').groups;
+    const scopedGroups = getStore('scoped').groups;
     const options = [
         '<option value="">移入：未分组</option>',
+        ...globalGroups.map(g => `<option value="global:${esc(g.id)}">全局组：${esc(g.name)}</option>`),
         ...presetGroups.map(g => `<option value="preset:${esc(g.id)}">预设组：${esc(g.name)}</option>`),
-        ...globalGroups.map(g => `<option value="global:${esc(g.id)}">全局/角色组：${esc(g.name)}</option>`),
+        ...scopedGroups.map(g => `<option value="scoped:${esc(g.id)}">角色组：${esc(g.name)}</option>`),
     ].join('');
 
     el.classList.add('is-open');
     el.innerHTML = `
-        <span>已选 <strong>${rState.selectedItems.size}</strong> 项</span>
+        <span class="bb-batch-count">已选 <strong>${rState.selectedItems.size}</strong> 项</span>
         <select class="bb-batch-target text_pole">${options}</select>
-        <button type="button" class="menu_button bb-btn-sm bb-btn-primary" data-batch-action="apply" ${rState.selectedItems.size ? '' : 'disabled'}>确认移动</button>
-        <button type="button" class="menu_button bb-btn-sm" data-batch-action="clear">清空</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${rState.selectedItems.size ? '' : 'disabled'}>确认移动</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear">清空</button>
     `;
 }
 
@@ -237,9 +267,12 @@ export function scheduleEnhanceRegexLists() {
 function enhanceAllRegexLists() {
     const regexContainer = document.getElementById('regex_container');
     if (!regexContainer) return;
+    bindRegexContainerIfNeeded(regexContainer);
+
     if (!rState.presetData) rState.presetData = loadPresetData().data;
 
     ensureRegexToolbar(regexContainer);
+    ensureListObservers();
     renderBatchDrawer();
 
     rState.observers.forEach(item => item.observer.disconnect());
@@ -250,16 +283,21 @@ function enhanceAllRegexLists() {
             enhanceSingleRegexContainer(listEl, cfg);
         }
     } finally {
-        rState.observers.forEach(item => item.observer.observe(item.el, { childList: true }));
+        rState.observers.forEach(item => {
+            if (item.el.isConnected) {
+                item.observer.observe(item.el, { childList: true });
+            }
+        });
     }
 }
 
 function enhanceSingleRegexContainer(listEl, cfg) {
     const nativeItems = Array.from(listEl.children).filter(el => el.classList.contains('regex-script-label'));
     listEl.querySelectorAll('.bb-group-header, .bb-group-note-li').forEach(el => el.remove());
-    if (!nativeItems.length) return;
 
     const store = getStore(cfg.storeScope);
+    if (!nativeItems.length && !store.groups.length) return;
+
     const groupMap = new Map(store.groups.map(g => [g.id, g]));
     const itemsByGroup = new Map(store.groups.map(g => [g.id, []]));
     const ungrouped = [];
@@ -268,10 +306,14 @@ function enhanceSingleRegexContainer(listEl, cfg) {
     for (const row of nativeItems) {
         const id = row.id;
         if (!id) continue;
+        // Refresh cached script name if native editor renamed it
+        const titleAttr = row.querySelector('.regex_script_name')?.getAttribute('title');
+        if (titleAttr) row.dataset.bbScriptName = titleAttr.trim();
+
         const meta = store.items[id] || { groupId: null, starred: false, note: '' };
         const disableChk = row.querySelector('.disable_regex');
         const enabled = disableChk ? !disableChk.checked : true;
-        const nameText = (row.querySelector('.regex_script_name')?.textContent || id).trim();
+        const nameText = getCleanRegexName(row);
         const group = meta.groupId && groupMap.has(meta.groupId) ? groupMap.get(meta.groupId) : null;
 
         const matchFilter = (rState.filter !== 'enabled' || enabled)
@@ -284,7 +326,7 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         row.classList.toggle('bb-filter-hidden', !matchFilter);
         row.classList.remove('bb-collapsed-hidden');
 
-        decorateRegexRow(row, id, meta, store.groups, cfg);
+        decorateRegexRow(row, id, meta, group, cfg);
 
         if (group) {
             itemsByGroup.get(group.id).push({ row, enabled, matchFilter });
@@ -294,16 +336,13 @@ function enhanceSingleRegexContainer(listEl, cfg) {
     }
 
     const frag = document.createDocumentFragment();
+    const hiddenTail = [];
 
     store.groups.forEach((group, idx) => {
         const entries = itemsByGroup.get(group.id) || [];
         const visibleEntries = entries.filter(e => e.matchFilter);
         if (forceExpand && !visibleEntries.length && (!rState.query || !group.name.toLowerCase().includes(rState.query))) {
-            for (const e of entries) frag.appendChild(e.row);
-            return;
-        }
-        // Only show groups in a container if they have items in this container OR if storeScope matches and it's empty
-        if (!entries.length && cfg.origin === 'scoped') {
+            for (const e of entries) hiddenTail.push(e.row);
             return;
         }
 
@@ -311,7 +350,7 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         const isCollapsed = group.collapsed && !forceExpand;
 
         const gHeader = document.createElement('div');
-        gHeader.className = `bb-group-header bb-regex-group-header ${group.enabled ? '' : 'is-group-disabled'}`;
+        gHeader.className = `bb-group-header bb-regex-group-header ${enabledCount > 0 ? '' : 'is-group-disabled'}`;
         gHeader.dataset.bbGroupId = group.id;
         gHeader.dataset.bbStoreScope = cfg.storeScope;
         gHeader.dataset.bbOrigin = cfg.origin;
@@ -367,10 +406,14 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         }
     }
 
+    for (const row of hiddenTail) {
+        frag.appendChild(row);
+    }
+
     listEl.appendChild(frag);
 }
 
-function decorateRegexRow(row, id, meta, groups, cfg) {
+function decorateRegexRow(row, id, meta, group, cfg) {
     const raw = findRawScript(id, cfg.origin);
     const scopeInfo = raw ? getRegexScopeInfo(raw) : null;
 
@@ -379,7 +422,7 @@ function decorateRegexRow(row, id, meta, groups, cfg) {
         let badge = nameEl.querySelector('.bb-regex-scope-badge');
         if (scopeInfo) {
             if (!badge) {
-                badge = document.createElement('span');
+                badge = document.createElement('small');
                 badge.className = 'bb-regex-scope-badge';
                 nameEl.appendChild(badge);
             }
@@ -390,7 +433,7 @@ function decorateRegexRow(row, id, meta, groups, cfg) {
         let noteTag = nameEl.querySelector('.bb-inline-note-tag');
         if (meta?.note) {
             if (!noteTag) {
-                noteTag = document.createElement('span');
+                noteTag = document.createElement('small');
                 noteTag.className = 'bb-inline-note-tag';
                 nameEl.appendChild(noteTag);
             }
@@ -403,7 +446,7 @@ function decorateRegexRow(row, id, meta, groups, cfg) {
 
     let extras = row.querySelector(':scope > .bb-item-extras');
     if (!extras) {
-        extras = document.createElement('span');
+        extras = document.createElement('div');
         extras.className = 'bb-item-extras';
         const btnGroup = row.querySelector(':scope > .flex-container');
         if (btnGroup) {
@@ -413,26 +456,53 @@ function decorateRegexRow(row, id, meta, groups, cfg) {
         }
     }
 
-    const groupOptions = [
-        `<option value="" ${!meta?.groupId ? 'selected' : ''}>未分组</option>`,
-        ...groups.map(g => `<option value="${esc(g.id)}" ${meta?.groupId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`),
-    ].join('');
+    const tipParts = [];
+    if (group) tipParts.push(`分组：${group.name}`);
+    if (meta?.note) tipParts.push(`备注：${meta.note}`);
+    const noteTitle = tipParts.length ? tipParts.join(' | ') : '设置所属分组与备注';
 
     extras.innerHTML = `
         ${rState.batchMode ? `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" data-origin="${cfg.origin}" data-scope="${cfg.storeScope}" ${rState.selectedItems.has(id) ? 'checked' : ''} />` : ''}
-        <button type="button" class="bb-star-btn ${meta?.starred ? 'is-starred' : ''}" data-bb-regex-act="star" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="星标"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
-        <button type="button" class="bb-mini-btn bb-note-btn ${meta?.note ? 'has-note' : ''}" data-bb-regex-act="note" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="${meta?.note ? esc(meta.note) : '添加备注'}"><i class="fa-regular fa-note-sticky"></i></button>
-        ${!rState.batchMode ? `<select class="bb-move-select bb-regex-move" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="移动到分组">${groupOptions}</select>` : ''}
+        <button type="button" class="bb-icon-action ${meta?.starred ? 'is-starred' : ''}" data-bb-regex-act="star" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="星标"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
+        <button type="button" class="bb-icon-action ${meta?.note ? 'has-note' : ''}" data-bb-regex-act="edit-item" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="${esc(noteTitle)}"><i class="fa-regular fa-note-sticky"></i></button>
     `;
 }
 
-export function initRegexEnhancer() {
-    if (rState.initialized) return;
-    const regexContainer = document.getElementById('regex_container');
-    if (!regexContainer) return;
-    rState.initialized = true;
+function ensureListObservers() {
+    const existingMap = new Map(rState.observers.map(o => [o.el, o]));
+    const nextObservers = [];
 
-    rState.presetData = loadPresetData().data;
+    for (const cfg of CONTAINERS) {
+        const listEl = document.getElementById(cfg.id);
+        if (!listEl) continue;
+        if (existingMap.has(listEl)) {
+            nextObservers.push(existingMap.get(listEl));
+        } else {
+            const obs = new MutationObserver(() => {
+                scheduleEnhanceRegexLists();
+            });
+            obs.observe(listEl, { childList: true });
+            nextObservers.push({ el: listEl, observer: obs });
+        }
+    }
+
+    for (const old of rState.observers) {
+        if (!nextObservers.includes(old)) {
+            old.observer.disconnect();
+        }
+    }
+    rState.observers = nextObservers;
+}
+
+function bindRegexContainerIfNeeded(regexContainer) {
+    if (!regexContainer || rState.boundRootEl === regexContainer) return;
+    rState.boundRootEl = regexContainer;
+
+    rState.rootObserver?.disconnect();
+    rState.rootObserver = new MutationObserver(() => {
+        scheduleEnhanceRegexLists();
+    });
+    rState.rootObserver.observe(regexContainer, { childList: true });
 
     regexContainer.addEventListener('click', async (e) => {
         const gHeader = e.target.closest('.bb-regex-group-header');
@@ -505,12 +575,18 @@ export function initRegexEnhancer() {
                 store.items[id].starred = !store.items[id].starred;
                 await persistStore(storeScope);
                 scheduleEnhanceRegexLists();
-            } else if (itemBtn.dataset.bbRegexAct === 'note') {
+            } else if (itemBtn.dataset.bbRegexAct === 'edit-item') {
                 const row = itemBtn.closest('.regex-script-label');
-                const itemName = row?.querySelector('.regex_script_name')?.textContent?.trim() || id;
-                const nextNote = await openNoteDialog({ itemName, note: store.items[id].note });
-                if (nextNote !== null) {
-                    store.items[id].note = nextNote;
+                const itemName = row ? getCleanRegexName(row) : id;
+                const res = await openItemDialog({
+                    itemName,
+                    note: store.items[id].note,
+                    groupId: store.items[id].groupId,
+                    groups: store.groups,
+                });
+                if (res !== null) {
+                    store.items[id].note = res.note;
+                    store.items[id].groupId = res.groupId;
                     await persistStore(storeScope);
                     scheduleEnhanceRegexLists();
                 }
@@ -518,7 +594,6 @@ export function initRegexEnhancer() {
             return;
         }
 
-        // Exclusive group enforcement when user enables a regex via native toggle
         if (e.target.closest('.regex-toggle-off')) {
             const row = e.target.closest('.regex-script-label');
             const listEl = row?.parentElement;
@@ -562,17 +637,6 @@ export function initRegexEnhancer() {
             return;
         }
 
-        if (target.classList.contains('bb-regex-move')) {
-            const id = target.dataset.id;
-            const storeScope = target.dataset.scope;
-            const store = getStore(storeScope);
-            if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
-            store.items[id].groupId = target.value || null;
-            await persistStore(storeScope);
-            scheduleEnhanceRegexLists();
-            return;
-        }
-
         if (target.classList.contains('bb-regex-group-toggle')) {
             const gHeader = target.closest('.bb-regex-group-header');
             const gid = gHeader?.dataset?.bbGroupId;
@@ -608,26 +672,20 @@ export function initRegexEnhancer() {
             scheduleEnhanceRegexLists();
         }
     });
+}
 
-    rState.observers = [];
-    for (const cfg of CONTAINERS) {
-        const listEl = document.getElementById(cfg.id);
-        if (!listEl) continue;
-        const obs = new MutationObserver(() => {
-            scheduleEnhanceRegexLists();
-        });
-        obs.observe(listEl, { childList: true });
-        rState.observers.push({ el: listEl, observer: obs });
+export function initRegexEnhancer() {
+    const regexContainer = document.getElementById('regex_container');
+    if (!regexContainer) return;
+    if (!rState.initialized) {
+        rState.initialized = true;
+        rState.presetData = loadPresetData().data;
     }
-
+    bindRegexContainerIfNeeded(regexContainer);
     scheduleEnhanceRegexLists();
 }
 
 export function onRegexPresetChanged() {
     rState.presetData = loadPresetData().data;
-    if (rState.initialized) {
-        scheduleEnhanceRegexLists();
-    } else {
-        initRegexEnhancer();
-    }
+    initRegexEnhancer();
 }

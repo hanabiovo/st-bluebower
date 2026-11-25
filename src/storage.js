@@ -52,7 +52,7 @@ export function createDefaultPresetData() {
 
 /**
  * Ensures global extension settings exist and returns them.
- * @returns {{ syncBaibai: boolean, lockPromptOrder: boolean, globalRegexGroups: Object }}
+ * @returns {{ syncBaibai: boolean, lockPromptOrder: boolean, globalRegexGroups: Object, scopedRegexGroups: Object }}
  */
 export function getGlobalSettings() {
     const ctx = window.SillyTavern?.getContext?.();
@@ -61,6 +61,7 @@ export function getGlobalSettings() {
             syncBaibai: true,
             lockPromptOrder: true,
             globalRegexGroups: createEmptyGroupStore(),
+            scopedRegexGroups: createEmptyGroupStore(),
         };
     }
 
@@ -73,7 +74,11 @@ export function getGlobalSettings() {
     if (!store.globalRegexGroups || typeof store.globalRegexGroups !== 'object') {
         store.globalRegexGroups = createEmptyGroupStore();
     }
+    if (!store.scopedRegexGroups || typeof store.scopedRegexGroups !== 'object') {
+        store.scopedRegexGroups = createEmptyGroupStore();
+    }
     normalizeGroupStore(store.globalRegexGroups);
+    normalizeGroupStore(store.scopedRegexGroups);
     return store;
 }
 
