@@ -16,15 +16,15 @@ const pState = {
     listObserver: null,
     boundContainerEl: null,
     boundListEl: null,
-    toolbarEl: null,
+    topbarLi: null,
     rafId: null,
+    searchOpen: false,
     filter: 'all', // 'all' | 'enabled' | 'starred'
     query: '',
     batchMode: false,
     selectedIds: new Set(),
     settingsOpen: false,
     starredCollapsed: false,
-    ungroupedCollapsed: false,
     presetData: null,
     hasBaibaiData: false,
     searchTimer: null,
@@ -46,12 +46,12 @@ function formatTokens(n) {
 }
 
 function showNotice(text) {
-    const el = pState.toolbarEl?.querySelector('.bb-inline-notice');
+    const el = pState.topbarLi?.querySelector('.bb-inline-notice');
     if (!el) return;
     el.textContent = text;
     el.classList.add('is-visible');
     clearTimeout(pState.noticeTimer);
-    pState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2400);
+    pState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2200);
 }
 
 function loadCurrentPresetState() {
@@ -66,49 +66,61 @@ function loadCurrentPresetState() {
 }
 
 /**
- * Ensures the cached Bluebower toolbar is mounted right before `#completion_prompt_manager_list`
- * inside `.range-block` (below the native header/footer controls).
- * @param {HTMLElement} listEl `#completion_prompt_manager_list`
+ * Creates (once) the sleek top header `<li>` integrated right inside `#completion_prompt_manager_list`.
+ * @returns {HTMLLIElement}
  */
-function ensurePromptToolbar(listEl) {
-    if (!pState.toolbarEl) {
-        const toolbar = document.createElement('div');
-        toolbar.id = 'bb_prompt_toolbar';
-        toolbar.className = 'bb-native-toolbar';
-        toolbar.innerHTML = `
-            <div class="bb-toolbar-row">
-                <span class="bb-brand-badge" title="园丁鸟 (Bluebower)"><i class="fa-solid fa-dove"></i></span>
-                <input type="search" class="bb-search text_pole" placeholder="搜索预设条目、分组或备注..." />
-                <div class="bb-pill-group">
-                    <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
-                    <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
-                    <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
-                </div>
-            </div>
-            <div class="bb-toolbar-row bb-toolbar-actions">
-                <button type="button" class="menu_button bb-btn-sm bb-new-group-btn" title="新建分组"><i class="fa-solid fa-plus"></i><span>分组</span></button>
-                <button type="button" class="menu_button bb-btn-sm bb-batch-btn" title="批量移动条目到分组"><i class="fa-solid fa-list-check"></i><span>批量整理</span></button>
-                <button type="button" class="menu_button bb-btn-sm bb-lock-btn" title="切换分组折叠视图 / 原始发送顺序拖拽"><i class="fa-solid fa-lock"></i><span>分组锁序</span></button>
-                <button type="button" class="menu_button bb-btn-sm bb-settings-btn" title="柏宝箱兼容设置"><i class="fa-solid fa-gear"></i></button>
-            </div>
-            <div class="bb-inline-notice"></div>
-            <div class="bb-settings-drawer" id="bb_prompt_settings"></div>
-            <div class="bb-batch-drawer" id="bb_prompt_batch"></div>
-            <div class="bb-starred-mirror" id="bb_prompt_starred"></div>
-        `;
-        bindToolbarEvents(toolbar);
-        pState.toolbarEl = toolbar;
-    }
+function ensureTopbarLi() {
+    if (pState.topbarLi) return pState.topbarLi;
 
-    if (pState.toolbarEl.nextElementSibling !== listEl) {
-        listEl.parentNode.insertBefore(pState.toolbarEl, listEl);
-    }
+    const li = document.createElement('li');
+    li.id = 'bb_prompt_topbar';
+    li.className = 'bb-list-topbar';
+    li.innerHTML = `
+        <div class="bb-topbar-main">
+            <div class="bb-topbar-status">
+                <i class="fa-solid fa-dove bb-bird-icon" title="园丁鸟 (Bluebower)"></i>
+                <span class="bb-status-text">预设分组</span>
+                <span class="bb-inline-notice"></span>
+            </div>
+            <div class="bb-topbar-icons">
+                <button type="button" class="bb-head-icon bb-search-toggle" title="搜索条目、分组或备注"><i class="fa-solid fa-magnifying-glass"></i></button>
+                <button type="button" class="bb-head-icon bb-filter-enabled" title="仅显示已启用条目"><i class="fa-solid fa-bolt"></i></button>
+                <button type="button" class="bb-head-icon bb-filter-starred" title="仅显示星标条目"><i class="fa-solid fa-star"></i></button>
+                <button type="button" class="bb-head-icon bb-new-group-btn" title="新建分组"><i class="fa-solid fa-folder-plus"></i></button>
+                <button type="button" class="bb-head-icon bb-batch-btn" title="批量移动条目到分组"><i class="fa-solid fa-list-check"></i></button>
+                <button type="button" class="bb-head-icon bb-lock-btn" title="切换分组折叠 / 原始顺序拖拽"><i class="fa-solid fa-lock"></i></button>
+                <button type="button" class="bb-head-icon bb-settings-btn" title="柏宝箱兼容设置"><i class="fa-solid fa-gear"></i></button>
+            </div>
+        </div>
+        <div class="bb-search-drawer">
+            <input type="search" class="bb-search text_pole" placeholder="搜索预设条目、分组或备注..." />
+        </div>
+        <div class="bb-settings-drawer" id="bb_prompt_settings"></div>
+        <div class="bb-batch-drawer" id="bb_prompt_batch"></div>
+        <div class="bb-starred-mirror" id="bb_prompt_starred"></div>
+    `;
+
+    bindTopbarEvents(li);
+    pState.topbarLi = li;
+    return li;
 }
 
-function bindToolbarEvents(toolbar) {
+function bindTopbarEvents(topbar) {
     const getListEl = () => document.getElementById('completion_prompt_manager_list');
+    const searchInput = topbar.querySelector('.bb-search');
 
-    const searchInput = toolbar.querySelector('.bb-search');
+    topbar.querySelector('.bb-search-toggle').addEventListener('click', () => {
+        pState.searchOpen = !pState.searchOpen;
+        if (!pState.searchOpen && pState.query) {
+            pState.query = '';
+            searchInput.value = '';
+        }
+        scheduleEnhancePromptList();
+        if (pState.searchOpen) {
+            setTimeout(() => searchInput.focus(), 20);
+        }
+    });
+
     searchInput.addEventListener('input', () => {
         clearTimeout(pState.searchTimer);
         pState.searchTimer = setTimeout(() => {
@@ -117,15 +129,17 @@ function bindToolbarEvents(toolbar) {
         }, 100);
     });
 
-    toolbar.querySelectorAll('.bb-pill').forEach(pill => {
-        pill.addEventListener('click', () => {
-            pState.filter = pill.dataset.filter;
-            toolbar.querySelectorAll('.bb-pill').forEach(p => p.classList.toggle('is-active', p === pill));
-            scheduleEnhancePromptList();
-        });
+    topbar.querySelector('.bb-filter-enabled').addEventListener('click', () => {
+        pState.filter = pState.filter === 'enabled' ? 'all' : 'enabled';
+        scheduleEnhancePromptList();
     });
 
-    toolbar.querySelector('.bb-new-group-btn').addEventListener('click', async () => {
+    topbar.querySelector('.bb-filter-starred').addEventListener('click', () => {
+        pState.filter = pState.filter === 'starred' ? 'all' : 'starred';
+        scheduleEnhancePromptList();
+    });
+
+    topbar.querySelector('.bb-new-group-btn').addEventListener('click', async () => {
         const res = await openGroupDialog({ mode: 'create' });
         if (!res) return;
         const store = pState.presetData.promptGroups;
@@ -143,14 +157,13 @@ function bindToolbarEvents(toolbar) {
         scheduleEnhancePromptList();
     });
 
-    toolbar.querySelector('.bb-batch-btn').addEventListener('click', () => {
+    topbar.querySelector('.bb-batch-btn').addEventListener('click', () => {
         pState.batchMode = !pState.batchMode;
         if (!pState.batchMode) pState.selectedIds.clear();
-        toolbar.querySelector('.bb-batch-btn').classList.toggle('is-active', pState.batchMode);
         scheduleEnhancePromptList();
     });
 
-    toolbar.querySelector('.bb-lock-btn').addEventListener('click', async () => {
+    topbar.querySelector('.bb-lock-btn').addEventListener('click', async () => {
         const locked = !pState.presetData.settings.lockPromptOrder;
         pState.presetData.settings.lockPromptOrder = locked;
         const gs = getGlobalSettings();
@@ -158,16 +171,15 @@ function bindToolbarEvents(toolbar) {
         saveGlobalSettings();
         await savePresetData(pState.presetData);
         scheduleEnhancePromptList();
-        showNotice(locked ? '已恢复分组折叠并锁定顺序' : '已切换为原始发送顺序，可安全拖拽调序');
+        showNotice(locked ? '已开启分组折叠' : '已切换为原序拖拽模式');
     });
 
-    toolbar.querySelector('.bb-settings-btn').addEventListener('click', () => {
+    topbar.querySelector('.bb-settings-btn').addEventListener('click', () => {
         pState.settingsOpen = !pState.settingsOpen;
-        toolbar.querySelector('.bb-settings-btn').classList.toggle('is-active', pState.settingsOpen);
-        renderSettingsDrawer();
+        syncTopbarControls(0, 0);
     });
 
-    toolbar.querySelector('#bb_prompt_settings').addEventListener('change', (e) => {
+    topbar.querySelector('#bb_prompt_settings').addEventListener('change', (e) => {
         if (e.target.classList.contains('bb-sync-baibai-chk')) {
             const gs = getGlobalSettings();
             gs.syncBaibai = Boolean(e.target.checked);
@@ -176,7 +188,7 @@ function bindToolbarEvents(toolbar) {
         }
     });
 
-    toolbar.querySelector('#bb_prompt_settings').addEventListener('click', async (e) => {
+    topbar.querySelector('#bb_prompt_settings').addEventListener('click', async (e) => {
         if (e.target.closest('.bb-reimport-baibai-btn')) {
             const res = importFromBaibai(pState.presetData);
             if (res.imported) {
@@ -190,7 +202,7 @@ function bindToolbarEvents(toolbar) {
         }
     });
 
-    toolbar.querySelector('#bb_prompt_batch').addEventListener('click', async (e) => {
+    topbar.querySelector('#bb_prompt_batch').addEventListener('click', async (e) => {
         const btn = e.target.closest('[data-batch-action]');
         if (!btn) return;
         const action = btn.dataset.batchAction;
@@ -203,7 +215,7 @@ function bindToolbarEvents(toolbar) {
             });
             scheduleEnhancePromptList();
         } else if (action === 'apply') {
-            const targetGid = toolbar.querySelector('.bb-batch-target')?.value || null;
+            const targetGid = topbar.querySelector('.bb-batch-target')?.value || null;
             const store = pState.presetData.promptGroups;
             for (const id of pState.selectedIds) {
                 if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
@@ -211,14 +223,13 @@ function bindToolbarEvents(toolbar) {
             }
             pState.selectedIds.clear();
             pState.batchMode = false;
-            toolbar.querySelector('.bb-batch-btn').classList.remove('is-active');
             await savePresetData(pState.presetData);
             scheduleEnhancePromptList();
             showNotice('批量移动完成');
         }
     });
 
-    toolbar.querySelector('#bb_prompt_starred').addEventListener('click', (e) => {
+    topbar.querySelector('#bb_prompt_starred').addEventListener('click', (e) => {
         if (e.target.closest('.bb-starred-header')) {
             pState.starredCollapsed = !pState.starredCollapsed;
             scheduleEnhancePromptList();
@@ -237,21 +248,38 @@ function bindToolbarEvents(toolbar) {
         if (toggleBtn) {
             const id = toggleBtn.dataset.id;
             const realLi = getListEl()?.querySelector(`.completion_prompt_manager_prompt[data-pm-identifier="${CSS.escape(id)}"]`);
-            const nativeToggle = realLi?.querySelector('.prompt-manager-toggle-action');
-            if (nativeToggle) {
-                nativeToggle.click();
-            }
+            realLi?.querySelector('.prompt-manager-toggle-action')?.click();
         }
     });
 }
 
-function updateLockButtonUI(toolbar, locked) {
-    const btn = toolbar?.querySelector('.bb-lock-btn');
-    if (!btn) return;
-    btn.classList.toggle('is-active', locked);
-    btn.innerHTML = locked
-        ? '<i class="fa-solid fa-lock"></i><span>分组锁序</span>'
-        : '<i class="fa-solid fa-lock-open"></i><span>原序调序</span>';
+function syncTopbarControls(enabledTotal, totalCount) {
+    const topbar = pState.topbarLi;
+    if (!topbar || !pState.presetData) return;
+
+    const locked = Boolean(pState.presetData.settings?.lockPromptOrder ?? true);
+    if (totalCount > 0) {
+        topbar.querySelector('.bb-status-text').textContent = locked
+            ? `已启用 ${enabledTotal}/${totalCount}`
+            : `原序调序 (${enabledTotal}/${totalCount})`;
+    }
+
+    topbar.querySelector('.bb-search-toggle').classList.toggle('is-active', pState.searchOpen || Boolean(pState.query));
+    topbar.querySelector('.bb-search-drawer').classList.toggle('is-open', pState.searchOpen || Boolean(pState.query));
+    topbar.querySelector('.bb-filter-enabled').classList.toggle('is-active', pState.filter === 'enabled');
+    topbar.querySelector('.bb-filter-starred').classList.toggle('is-active', pState.filter === 'starred');
+    topbar.querySelector('.bb-batch-btn').classList.toggle('is-active', pState.batchMode);
+    topbar.querySelector('.bb-settings-btn').classList.toggle('is-active', pState.settingsOpen);
+
+    const lockBtn = topbar.querySelector('.bb-lock-btn');
+    lockBtn.classList.toggle('is-active', !locked);
+    lockBtn.innerHTML = locked
+        ? '<i class="fa-solid fa-lock"></i>'
+        : '<i class="fa-solid fa-lock-open"></i>';
+    lockBtn.title = locked ? '当前：分组折叠（点击切换为原序拖拽）' : '当前：原序拖拽（点击返回分组折叠）';
+
+    renderSettingsDrawer();
+    renderBatchDrawer();
 }
 
 function applyLockOrderState(listEl, locked) {
@@ -269,7 +297,7 @@ function applyLockOrderState(listEl, locked) {
 }
 
 function renderSettingsDrawer() {
-    const el = pState.toolbarEl?.querySelector('#bb_prompt_settings');
+    const el = pState.topbarLi?.querySelector('#bb_prompt_settings');
     if (!el) return;
     if (!pState.settingsOpen) {
         el.innerHTML = '';
@@ -284,13 +312,13 @@ function renderSettingsDrawer() {
             <span>双向同步柏宝箱格式</span>
         </label>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-reimport-baibai-btn" ${pState.hasBaibaiData ? '' : 'disabled'}>
-            从柏宝箱重导分组
+            重导柏宝箱分组
         </button>
     `;
 }
 
 function renderBatchDrawer() {
-    const el = pState.toolbarEl?.querySelector('#bb_prompt_batch');
+    const el = pState.topbarLi?.querySelector('#bb_prompt_batch');
     if (!el) return;
     if (!pState.batchMode) {
         el.innerHTML = '';
@@ -306,33 +334,20 @@ function renderBatchDrawer() {
     el.innerHTML = `
         <span class="bb-batch-count">已选 <strong>${pState.selectedIds.size}</strong> 项</span>
         <select class="bb-batch-target text_pole">${options}</select>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${pState.selectedIds.size ? '' : 'disabled'}>确认移动</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${pState.selectedIds.size ? '' : 'disabled'}>移动</button>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear">清空</button>
     `;
 }
 
-/**
- * Reads clean prompt name from `data-pm-name` so inline note tags never pollute it.
- * @param {HTMLElement} li
- * @param {string} fallbackId
- * @returns {string}
- */
 function getCleanPromptName(li, fallbackId) {
     const nameEl = li.querySelector('.completion_prompt_manager_prompt_name');
-    if (nameEl?.dataset?.pmName) {
-        return nameEl.dataset.pmName.trim();
-    }
+    if (nameEl?.dataset?.pmName) return nameEl.dataset.pmName.trim();
     const inspectLink = nameEl?.querySelector('.prompt-manager-inspect-action');
-    if (inspectLink?.textContent) {
-        return inspectLink.textContent.trim();
-    }
+    if (inspectLink?.textContent) return inspectLink.textContent.trim();
     return fallbackId;
 }
 
-/**
- *Schedules a single RAF-batched enhancement pass on `#completion_prompt_manager_list`.
- */
 export function scheduleEnhancePromptList() {
     if (pState.rafId) cancelAnimationFrame(pState.rafId);
     pState.rafId = requestAnimationFrame(() => {
@@ -341,6 +356,10 @@ export function scheduleEnhancePromptList() {
     });
 }
 
+/**
+ * Groups and folds native `.completion_prompt_manager_prompt` items in-place,
+ * strictly preserving the author's original `prompt_order` sequence for both groups and items.
+ */
 function enhancePromptList() {
     const container = document.getElementById('completion_prompt_manager');
     if (!container) return;
@@ -350,48 +369,56 @@ function enhancePromptList() {
 
     const listEl = document.getElementById('completion_prompt_manager_list');
     if (!listEl) return;
-
-    ensurePromptToolbar(listEl);
     bindListIfNeeded(listEl);
 
+    const topbarLi = ensureTopbarLi();
     const locked = Boolean(pState.presetData.settings?.lockPromptOrder ?? true);
-    updateLockButtonUI(pState.toolbarEl, locked);
     applyLockOrderState(listEl, locked);
-    renderSettingsDrawer();
-    renderBatchDrawer();
 
     const nativeItems = Array.from(listEl.children).filter(el => el.classList.contains('completion_prompt_manager_prompt'));
-    if (!nativeItems.length) {
-        renderStarredMirror([], false);
-        return;
-    }
-
-    // Record original prompt_order DOM index on fresh render before grouping
-    nativeItems.forEach((li, idx) => {
-        if (li.dataset.bbOrigIdx === undefined) {
-            li.dataset.bbOrigIdx = String(idx);
-        }
-    });
-
-    // Sort back by original index first so intra-group order always reflects true prompt_order
-    nativeItems.sort((a, b) => Number(a.dataset.bbOrigIdx) - Number(b.dataset.bbOrigIdx));
 
     pState.listObserver?.disconnect();
     try {
+        // Hide redundant native "名称 / Token" header when our sleek topbar is active
+        const headLi = listEl.querySelector('.completion_prompt_manager_list_head');
+        const sepLi = listEl.querySelector('.completion_prompt_manager_list_separator');
+        if (headLi) headLi.classList.add('bb-native-head-hidden');
+        if (sepLi) sepLi.classList.add('bb-native-head-hidden');
+
         listEl.querySelectorAll('.bb-group-header, .bb-group-note-li').forEach(el => el.remove());
+
+        if (!nativeItems.length) {
+            if (listEl.firstElementChild !== topbarLi) {
+                listEl.prepend(topbarLi);
+            }
+            syncTopbarControls(0, 0);
+            renderStarredMirror([], false);
+            return;
+        }
+
+        // Record true prompt_order position on initial render
+        nativeItems.forEach((li, idx) => {
+            if (li.dataset.bbOrigIdx === undefined) {
+                li.dataset.bbOrigIdx = String(idx);
+            }
+        });
+        nativeItems.sort((a, b) => Number(a.dataset.bbOrigIdx) - Number(b.dataset.bbOrigIdx));
 
         const store = pState.presetData.promptGroups;
         const groupMap = new Map(store.groups.map(g => [g.id, g]));
         const itemsByGroup = new Map(store.groups.map(g => [g.id, []]));
-        const ungrouped = [];
+        const itemRecords = [];
         const starred = [];
         const forceExpand = Boolean(pState.query) || pState.filter !== 'all';
+        let enabledTotal = 0;
 
         for (const li of nativeItems) {
             const id = li.dataset.pmIdentifier;
             if (!id) continue;
             const meta = store.items[id] || { groupId: null, starred: false, note: '' };
             const enabled = !li.classList.contains('completion_prompt_manager_prompt_disabled');
+            if (enabled) enabledTotal++;
+
             const nameText = getCleanPromptName(li, id);
             const rawTok = Number.parseInt(li.querySelector('.prompt_manager_prompt_tokens')?.dataset?.pmTokens || '', 10);
             const tokenVal = Number.isFinite(rawTok) && rawTok > 0 ? rawTok : 0;
@@ -405,41 +432,43 @@ function enhancePromptList() {
                     || (group?.name || '').toLowerCase().includes(pState.query));
 
             li.classList.toggle('bb-filter-hidden', !matchFilter);
-            li.classList.remove('bb-collapsed-hidden');
+            li.classList.remove('bb-collapsed-hidden', 'bb-grouped-child');
 
-            decoratePromptItem(li, id, meta, group);
+            decoratePromptItem(li, id, meta, group, locked);
 
             if (matchFilter && meta.starred) {
                 starred.push({ id, name: nameText, enabled, tokenVal, note: meta.note });
             }
 
+            const rec = { li, id, enabled, tokenVal, matchFilter, group };
+            itemRecords.push(rec);
             if (group) {
-                itemsByGroup.get(group.id).push({ li, enabled, tokenVal, matchFilter });
-            } else {
-                ungrouped.push({ li, enabled, tokenVal, matchFilter });
+                itemsByGroup.get(group.id).push(rec);
             }
         }
 
+        syncTopbarControls(enabledTotal, itemRecords.length);
         renderStarredMirror(starred, forceExpand);
 
         const frag = document.createDocumentFragment();
-        const headLi = listEl.querySelector('.completion_prompt_manager_list_head');
-        const sepLi = listEl.querySelector('.completion_prompt_manager_list_separator');
+        frag.appendChild(topbarLi);
         if (headLi) frag.appendChild(headLi);
         if (sepLi) frag.appendChild(sepLi);
 
-        // Unlocked mode: show items in true original prompt_order sequence for safe native drag-and-drop!
+        // Raw-order draggable mode: render all items flat in exact prompt_order
         if (!locked) {
-            for (const li of nativeItems) {
-                frag.appendChild(li);
+            for (const rec of itemRecords) {
+                frag.appendChild(rec.li);
             }
             listEl.appendChild(frag);
             return;
         }
 
         const hiddenTail = [];
+        const placedGroups = new Set();
 
-        store.groups.forEach((group, idx) => {
+        const appendGroupBlock = (group) => {
+            placedGroups.add(group.id);
             const entries = itemsByGroup.get(group.id) || [];
             const visibleEntries = entries.filter(e => e.matchFilter);
             if (forceExpand && !visibleEntries.length && (!pState.query || !group.name.toLowerCase().includes(pState.query))) {
@@ -457,18 +486,13 @@ function enhancePromptList() {
             gHeader.innerHTML = `
                 <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
                 <span class="bb-group-name">${esc(group.name)}</span>
+                <span class="bb-group-meta">(${enabledCount}/${entries.length})</span>
+                ${tokenSum > 0 ? `<span class="bb-group-tokens" title="组内已启用 Token">~${formatTokens(tokenSum)}</span>` : ''}
                 ${group.exclusive ? '<span class="bb-tag bb-tag-exclusive" title="互斥单选组">互斥</span>' : ''}
-                <span class="bb-count-badge">${enabledCount}/${entries.length}</span>
-                ${tokenSum > 0 ? `<span class="bb-token-badge" title="已启用条目 Token 总计">~${formatTokens(tokenSum)}</span>` : ''}
                 <span class="bb-group-controls">
-                    <button type="button" class="bb-mini-btn" data-bb-act="up" ${idx === 0 ? 'disabled' : ''} title="上移分组"><i class="fa-solid fa-arrow-up"></i></button>
-                    <button type="button" class="bb-mini-btn" data-bb-act="down" ${idx === store.groups.length - 1 ? 'disabled' : ''} title="下移分组"><i class="fa-solid fa-arrow-down"></i></button>
-                    <button type="button" class="bb-mini-btn" data-bb-act="edit" title="编辑分组 / 互斥 / 备注"><i class="fa-solid fa-pen"></i></button>
-                    <button type="button" class="bb-mini-btn bb-danger-btn" data-bb-act="del" title="删除分组"><i class="fa-solid fa-xmark"></i></button>
-                    <label class="bb-switch-wrap" title="分组总开关">
-                        <input type="checkbox" class="bb-switch bb-group-toggle" ${enabledCount > 0 ? 'checked' : ''} />
-                        <span class="bb-switch-slider"></span>
-                    </label>
+                    <span class="bb-group-toggle-icon fa-solid ${enabledCount > 0 ? 'fa-toggle-on is-on' : 'fa-toggle-off'}" data-bb-act="toggle" title="整组开关"></span>
+                    <button type="button" class="bb-row-icon" data-bb-act="edit" title="编辑分组 / 互斥 / 备注"><i class="fa-solid fa-pen"></i></button>
+                    <button type="button" class="bb-row-icon bb-danger-icon" data-bb-act="del" title="删除分组"><i class="fa-solid fa-trash"></i></button>
                 </span>
             `;
             frag.appendChild(gHeader);
@@ -481,28 +505,28 @@ function enhancePromptList() {
             }
 
             for (const entry of entries) {
+                entry.li.classList.add('bb-grouped-child');
                 if (isCollapsed) entry.li.classList.add('bb-collapsed-hidden');
                 frag.appendChild(entry.li);
             }
-        });
+        };
 
-        if (ungrouped.length) {
-            const visibleUngrouped = ungrouped.filter(e => e.matchFilter);
-            const isCollapsed = pState.ungroupedCollapsed && !forceExpand;
-            if (!forceExpand || visibleUngrouped.length) {
-                const enabledCount = ungrouped.filter(e => e.enabled).length;
-                const uHeader = document.createElement('li');
-                uHeader.className = 'bb-group-header bb-ungrouped-header';
-                uHeader.innerHTML = `
-                    <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
-                    <span class="bb-group-name">未分组</span>
-                    <span class="bb-count-badge">${enabledCount}/${ungrouped.length}</span>
-                `;
-                frag.appendChild(uHeader);
+        // 1. Render newly-created empty groups at the top so user sees them immediately
+        for (const group of store.groups) {
+            if ((itemsByGroup.get(group.id) || []).length === 0) {
+                appendGroupBlock(group);
             }
-            for (const entry of ungrouped) {
-                if (isCollapsed) entry.li.classList.add('bb-collapsed-hidden');
-                frag.appendChild(entry.li);
+        }
+
+        // 2. Walk items in true `prompt_order`: place each group at its first member's exact position,
+        //    and leave ungrouped items inline at their exact `prompt_order` position!
+        for (const rec of itemRecords) {
+            if (rec.group) {
+                if (!placedGroups.has(rec.group.id)) {
+                    appendGroupBlock(rec.group);
+                }
+            } else {
+                frag.appendChild(rec.li);
             }
         }
 
@@ -517,7 +541,7 @@ function enhancePromptList() {
 }
 
 function renderStarredMirror(starred, forceExpand) {
-    const box = pState.toolbarEl?.querySelector('#bb_prompt_starred');
+    const box = pState.topbarLi?.querySelector('#bb_prompt_starred');
     if (!box) return;
     if (!starred.length) {
         box.innerHTML = '';
@@ -527,8 +551,8 @@ function renderStarredMirror(starred, forceExpand) {
     box.innerHTML = `
         <div class="bb-starred-header">
             <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
-            <span class="bb-group-name"><i class="fa-solid fa-star bb-star-icon"></i> 常用置顶</span>
-            <span class="bb-count-badge">${starred.length}</span>
+            <span class="bb-group-name"><i class="fa-solid fa-star bb-star-icon"></i> 收藏置顶</span>
+            <span class="bb-group-meta">(${starred.length})</span>
         </div>
         ${isCollapsed ? '' : `
             <div class="bb-starred-items">
@@ -537,10 +561,8 @@ function renderStarredMirror(starred, forceExpand) {
                         <button type="button" class="bb-star-mirror-unstar" data-id="${esc(s.id)}" title="取消星标"><i class="fa-solid fa-star"></i></button>
                         <span class="bb-starred-name" title="${esc(s.name)}">${esc(s.name)}</span>
                         ${s.note ? `<span class="bb-starred-note">${esc(s.note)}</span>` : ''}
-                        ${s.tokenVal > 0 ? `<span class="bb-token-mini">${formatTokens(s.tokenVal)}</span>` : ''}
-                        <button type="button" class="bb-mirror-toggle menu_button bb-btn-sm bb-drawer-btn" data-id="${esc(s.id)}">
-                            ${s.enabled ? '已开启' : '已关闭'}
-                        </button>
+                        ${s.tokenVal > 0 ? `<span class="bb-group-tokens">${formatTokens(s.tokenVal)}</span>` : ''}
+                        <span class="bb-mirror-toggle bb-group-toggle-icon fa-solid ${s.enabled ? 'fa-toggle-on is-on' : 'fa-toggle-off'}" data-id="${esc(s.id)}" title="切换启用"></span>
                     </div>
                 `).join('')}
             </div>
@@ -548,11 +570,7 @@ function renderStarredMirror(starred, forceExpand) {
     `;
 }
 
-/**
- * Injects compact star & item-settings icons inside `.prompt_manager_prompt_controls` using `<div>`
- * so SillyTavern's `span span span` CSS rules never crush or distort them.
- */
-function decoratePromptItem(li, id, meta, group) {
+function decoratePromptItem(li, id, meta, group, locked) {
     const controls = li.querySelector('.prompt_manager_prompt_controls');
     const host = controls || li;
     let extras = host.querySelector(':scope > .bb-item-extras');
@@ -566,7 +584,6 @@ function decoratePromptItem(li, id, meta, group) {
         }
     }
 
-    const locked = Boolean(pState.presetData.settings?.lockPromptOrder ?? true);
     const tipParts = [];
     if (group) tipParts.push(`分组：${group.name}`);
     if (meta?.note) tipParts.push(`备注：${meta.note}`);
@@ -580,7 +597,6 @@ function decoratePromptItem(li, id, meta, group) {
 
     const nameEl = li.querySelector('.completion_prompt_manager_prompt_name');
     if (nameEl) {
-        // Show subtle group tag when in unlocked raw-order view, or note tag if present
         let noteTag = nameEl.querySelector('.bb-inline-note-tag');
         const tagText = !locked && group ? `[${group.name}] ${meta?.note || ''}`.trim() : (meta?.note || '');
         if (tagText) {
@@ -613,7 +629,6 @@ function bindListIfNeeded(listEl) {
 
     pState.listObserver?.disconnect();
 
-    // Update cached original indices after user drags in unlocked raw-order mode
     const $ = window.jQuery;
     if ($) {
         $(listEl).on('sortstop.bluebower', () => {
@@ -625,32 +640,42 @@ function bindListIfNeeded(listEl) {
     }
 
     listEl.addEventListener('click', async (e) => {
+        if (e.target.closest('#bb_prompt_topbar')) return;
+
         const groupHeader = e.target.closest('.bb-group-header');
         if (groupHeader) {
-            if (groupHeader.classList.contains('bb-ungrouped-header')) {
-                pState.ungroupedCollapsed = !pState.ungroupedCollapsed;
-                scheduleEnhancePromptList();
-                return;
-            }
             const gid = groupHeader.dataset.bbGroupId;
             const store = pState.presetData.promptGroups;
             const group = store.groups.find(g => g.id === gid);
             if (!group) return;
 
-            const actBtn = e.target.closest('[data-bb-act]');
-            if (actBtn) {
+            const actEl = e.target.closest('[data-bb-act]');
+            if (actEl) {
                 e.stopPropagation();
-                const act = actBtn.dataset.bbAct;
-                if (act === 'up' || act === 'down') {
-                    const idx = store.groups.findIndex(g => g.id === gid);
-                    const target = act === 'up' ? idx - 1 : idx + 1;
-                    if (target >= 0 && target < store.groups.length) {
-                        const [m] = store.groups.splice(idx, 1);
-                        store.groups.splice(target, 0, m);
-                        store.groups.forEach((g, i) => { g.order = i; });
-                        await savePresetData(pState.presetData);
-                        scheduleEnhancePromptList();
+                const act = actEl.dataset.bbAct;
+                if (act === 'toggle') {
+                    const memberLis = Array.from(listEl.querySelectorAll('.completion_prompt_manager_prompt'))
+                        .filter(li => store.items[li.dataset.pmIdentifier]?.groupId === gid);
+                    const anyEnabled = memberLis.some(li => !li.classList.contains('completion_prompt_manager_prompt_disabled'));
+                    const nextEnabled = !anyEnabled;
+                    group.enabled = nextEnabled;
+
+                    let updates;
+                    if (nextEnabled && group.exclusive && memberLis.length > 1) {
+                        const keepId = memberLis[0].dataset.pmIdentifier;
+                        updates = memberLis.map(li => ({
+                            id: li.dataset.pmIdentifier,
+                            enabled: li.dataset.pmIdentifier === keepId,
+                        }));
+                    } else {
+                        updates = memberLis.map(li => ({
+                            id: li.dataset.pmIdentifier,
+                            enabled: nextEnabled,
+                        }));
                     }
+                    batchSetPromptsEnabled(updates);
+                    await savePresetData(pState.presetData);
+                    scheduleEnhancePromptList();
                 } else if (act === 'edit') {
                     const res = await openGroupDialog({ mode: 'edit', group });
                     if (res) {
@@ -672,8 +697,6 @@ function bindListIfNeeded(listEl) {
                 }
                 return;
             }
-
-            if (e.target.closest('.bb-switch-wrap')) return;
 
             group.collapsed = !group.collapsed;
             scheduleEnhancePromptList();
@@ -735,46 +758,14 @@ function bindListIfNeeded(listEl) {
         }
     });
 
-    listEl.addEventListener('change', async (e) => {
+    listEl.addEventListener('change', (e) => {
+        if (e.target.closest('#bb_prompt_topbar')) return;
         const target = e.target;
-        const store = pState.presetData.promptGroups;
-
         if (target.classList.contains('bb-batch-chk')) {
             const id = target.dataset.id;
             if (target.checked) pState.selectedIds.add(id);
             else pState.selectedIds.delete(id);
             renderBatchDrawer();
-            return;
-        }
-
-        if (target.classList.contains('bb-group-toggle')) {
-            const gid = target.closest('.bb-group-header')?.dataset?.bbGroupId;
-            const group = store.groups.find(g => g.id === gid);
-            if (!group) return;
-            const nextEnabled = Boolean(target.checked);
-            group.enabled = nextEnabled;
-
-            const memberLis = Array.from(listEl.querySelectorAll('.completion_prompt_manager_prompt'))
-                .filter(li => store.items[li.dataset.pmIdentifier]?.groupId === gid);
-
-            let updates;
-            if (nextEnabled && group.exclusive && memberLis.length > 1) {
-                const alreadyOn = memberLis.find(li => !li.classList.contains('completion_prompt_manager_prompt_disabled'));
-                const keepId = (alreadyOn || memberLis[0]).dataset.pmIdentifier;
-                updates = memberLis.map(li => ({
-                    id: li.dataset.pmIdentifier,
-                    enabled: li.dataset.pmIdentifier === keepId,
-                }));
-            } else {
-                updates = memberLis.map(li => ({
-                    id: li.dataset.pmIdentifier,
-                    enabled: nextEnabled,
-                }));
-            }
-
-            batchSetPromptsEnabled(updates);
-            await savePresetData(pState.presetData);
-            scheduleEnhancePromptList();
         }
     });
 

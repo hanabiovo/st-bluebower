@@ -14,13 +14,23 @@ function esc(str) {
 
 /**
  * Opens a small centered dialog for creating or editing a group.
- * @param {{ mode: 'create' | 'edit', group?: Object }} options
- * @returns {Promise<{ name: string, note: string, exclusive: boolean } | null>}
+ * @param {{ mode: 'create' | 'edit', group?: Object, scopeOptions?: Array<{ value: string, label: string }>, defaultScope?: string }} options
+ * @returns {Promise<{ name: string, note: string, exclusive: boolean, scope: string } | null>}
  */
-export function openGroupDialog({ mode, group = null }) {
+export function openGroupDialog({ mode, group = null, scopeOptions = null, defaultScope = 'preset' }) {
+    const scopeFieldHtml = Array.isArray(scopeOptions) && scopeOptions.length ? `
+        <label class="bb-field">
+            <span>归属范围</span>
+            <select name="scope" class="text_pole">
+                ${scopeOptions.map(opt => `<option value="${esc(opt.value)}" ${opt.value === defaultScope ? 'selected' : ''}>${esc(opt.label)}</option>`).join('')}
+            </select>
+        </label>
+    ` : '';
+
     return openFormDialog(`
         <form class="bb-dialog-card">
             <div class="bb-dialog-title">${mode === 'edit' ? '编辑分组' : '新建分组'}</div>
+            ${scopeFieldHtml}
             <label class="bb-field">
                 <span>分组名称</span>
                 <input type="text" name="name" class="text_pole" required maxlength="40" value="${esc(group?.name || '')}" placeholder="例如：思维链 / 文风 / 状态栏" />
@@ -45,6 +55,7 @@ export function openGroupDialog({ mode, group = null }) {
             name,
             note: String(fd.get('note') || '').trim(),
             exclusive: Boolean(fd.get('exclusive')),
+            scope: String(fd.get('scope') || defaultScope),
         };
     });
 }

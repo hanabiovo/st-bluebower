@@ -10,9 +10,9 @@ import {
 import { batchSetRegexEnabled, getRegexScopeInfo } from './st-bridge.js';
 
 const CONTAINERS = [
-    { id: 'saved_regex_scripts', origin: 'global', storeScope: 'global' },
-    { id: 'saved_preset_scripts', origin: 'preset', storeScope: 'preset' },
-    { id: 'saved_scoped_scripts', origin: 'scoped', storeScope: 'scoped' },
+    { id: 'saved_regex_scripts', origin: 'global', storeScope: 'global', label: '全局正则' },
+    { id: 'saved_preset_scripts', origin: 'preset', storeScope: 'preset', label: '预设正则' },
+    { id: 'saved_scoped_scripts', origin: 'scoped', storeScope: 'scoped', label: '角色正则' },
 ];
 
 const rState = {
@@ -22,11 +22,11 @@ const rState = {
     boundRootEl: null,
     toolbarEl: null,
     rafId: null,
+    searchOpen: false,
     filter: 'all', // 'all' | 'enabled' | 'starred'
     query: '',
     batchMode: false,
     selectedItems: new Map(), // id -> { origin, storeScope }
-    ungroupedCollapsed: { global: false, preset: false, scoped: false },
     presetData: null,
     searchTimer: null,
     noticeTimer: null,
@@ -46,7 +46,7 @@ function showNotice(text) {
     el.textContent = text;
     el.classList.add('is-visible');
     clearTimeout(rState.noticeTimer);
-    rState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2400);
+    rState.noticeTimer = setTimeout(() => el.classList.remove('is-visible'), 2200);
 }
 
 function getStore(storeScope) {
@@ -83,11 +83,6 @@ function findRawScript(id, origin) {
     return arr.find(s => String(s?.id) === String(id)) ?? null;
 }
 
-/**
- * Reads clean script name without injected scope/note badges.
- * @param {HTMLElement} row
- * @returns {string}
- */
 function getCleanRegexName(row) {
     if (row.dataset.bbScriptName) return row.dataset.bbScriptName;
     const nameEl = row.querySelector('.regex_script_name');
@@ -103,27 +98,25 @@ function ensureRegexToolbar(regexContainer) {
     if (!rState.toolbarEl) {
         const toolbar = document.createElement('div');
         toolbar.id = 'bb_regex_toolbar';
-        toolbar.className = 'bb-native-toolbar bb-regex-toolbar';
+        toolbar.className = 'bb-list-topbar bb-regex-topbar';
         toolbar.innerHTML = `
-            <div class="bb-toolbar-row">
-                <span class="bb-brand-badge" title="园丁鸟 (Bluebower)"><i class="fa-solid fa-dove"></i></span>
-                <input type="search" class="bb-search text_pole" placeholder="搜索正则脚本、分组或备注..." />
-                <div class="bb-pill-group">
-                    <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
-                    <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
-                    <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
+            <div class="bb-topbar-main">
+                <div class="bb-topbar-status">
+                    <i class="fa-solid fa-dove bb-bird-icon" title="园丁鸟 (Bluebower)"></i>
+                    <span class="bb-status-text">正则分组</span>
+                    <span class="bb-inline-notice"></span>
+                </div>
+                <div class="bb-topbar-icons">
+                    <button type="button" class="bb-head-icon bb-search-toggle" title="搜索正则脚本、分组或备注"><i class="fa-solid fa-magnifying-glass"></i></button>
+                    <button type="button" class="bb-head-icon bb-filter-enabled" title="仅显示已启用正则"><i class="fa-solid fa-bolt"></i></button>
+                    <button type="button" class="bb-head-icon bb-filter-starred" title="仅显示星标正则"><i class="fa-solid fa-star"></i></button>
+                    <button type="button" class="bb-head-icon bb-new-group-btn" title="新建正则分组"><i class="fa-solid fa-folder-plus"></i></button>
+                    <button type="button" class="bb-head-icon bb-batch-btn" title="批量移动正则到分组"><i class="fa-solid fa-list-check"></i></button>
                 </div>
             </div>
-            <div class="bb-toolbar-row bb-toolbar-actions">
-                <select class="bb-regex-target-scope text_pole" title="新建分组的归属范围">
-                    <option value="global">全局正则组</option>
-                    <option value="preset">预设正则组</option>
-                    <option value="scoped">角色正则组</option>
-                </select>
-                <button type="button" class="menu_button bb-btn-sm bb-new-group-btn"><i class="fa-solid fa-plus"></i><span>分组</span></button>
-                <button type="button" class="menu_button bb-btn-sm bb-batch-btn"><i class="fa-solid fa-list-check"></i><span>批量整理</span></button>
+            <div class="bb-search-drawer">
+                <input type="search" class="bb-search text_pole" placeholder="搜索正则脚本、分组或备注..." />
             </div>
-            <div class="bb-inline-notice"></div>
             <div class="bb-batch-drawer" id="bb_regex_batch"></div>
         `;
         bindRegexToolbarEvents(toolbar);
@@ -139,6 +132,17 @@ function ensureRegexToolbar(regexContainer) {
 
 function bindRegexToolbarEvents(toolbar) {
     const searchInput = toolbar.querySelector('.bb-search');
+
+    toolbar.querySelector('.bb-search-toggle').addEventListener('click', () => {
+        rState.searchOpen = !rState.searchOpen;
+        if (!rState.searchOpen && rState.query) {
+            rState.query = '';
+            searchInput.value = '';
+        }
+        scheduleEnhanceRegexLists();
+        if (rState.searchOpen) setTimeout(() => searchInput.focus(), 20);
+    });
+
     searchInput.addEventListener('input', () => {
         clearTimeout(rState.searchTimer);
         rState.searchTimer = setTimeout(() => {
@@ -147,18 +151,26 @@ function bindRegexToolbarEvents(toolbar) {
         }, 100);
     });
 
-    toolbar.querySelectorAll('.bb-pill').forEach(pill => {
-        pill.addEventListener('click', () => {
-            rState.filter = pill.dataset.filter;
-            toolbar.querySelectorAll('.bb-pill').forEach(p => p.classList.toggle('is-active', p === pill));
-            scheduleEnhanceRegexLists();
-        });
+    toolbar.querySelector('.bb-filter-enabled').addEventListener('click', () => {
+        rState.filter = rState.filter === 'enabled' ? 'all' : 'enabled';
+        scheduleEnhanceRegexLists();
+    });
+
+    toolbar.querySelector('.bb-filter-starred').addEventListener('click', () => {
+        rState.filter = rState.filter === 'starred' ? 'all' : 'starred';
+        scheduleEnhanceRegexLists();
     });
 
     toolbar.querySelector('.bb-new-group-btn').addEventListener('click', async () => {
-        const storeScope = toolbar.querySelector('.bb-regex-target-scope')?.value || 'global';
-        const res = await openGroupDialog({ mode: 'create' });
+        const hasPresetScripts = (document.getElementById('saved_preset_scripts')?.children?.length || 0) > 0;
+        const defaultScope = hasPresetScripts ? 'preset' : 'global';
+        const res = await openGroupDialog({
+            mode: 'create',
+            defaultScope,
+            scopeOptions: CONTAINERS.map(c => ({ value: c.storeScope, label: c.label })),
+        });
         if (!res) return;
+        const storeScope = res.scope || defaultScope;
         const store = getStore(storeScope);
         store.groups.push({
             id: makeId(),
@@ -177,7 +189,6 @@ function bindRegexToolbarEvents(toolbar) {
     toolbar.querySelector('.bb-batch-btn').addEventListener('click', () => {
         rState.batchMode = !rState.batchMode;
         if (!rState.batchMode) rState.selectedItems.clear();
-        toolbar.querySelector('.bb-batch-btn').classList.toggle('is-active', rState.batchMode);
         scheduleEnhanceRegexLists();
     });
 
@@ -219,12 +230,22 @@ function bindRegexToolbarEvents(toolbar) {
 
             rState.selectedItems.clear();
             rState.batchMode = false;
-            toolbar.querySelector('.bb-batch-btn').classList.remove('is-active');
             for (const s of dirtyScopes) await persistStore(s);
             scheduleEnhanceRegexLists();
-            showNotice(movedCount > 0 ? `已移动 ${movedCount} 项正则` : '所选正则与目标分组不在同一作用域');
+            showNotice(movedCount > 0 ? `已移动 ${movedCount} 项正则` : '所选正则与目标分组不在同一范围');
         }
     });
+}
+
+function syncRegexTopbar() {
+    const topbar = rState.toolbarEl;
+    if (!topbar) return;
+    topbar.querySelector('.bb-search-toggle').classList.toggle('is-active', rState.searchOpen || Boolean(rState.query));
+    topbar.querySelector('.bb-search-drawer').classList.toggle('is-open', rState.searchOpen || Boolean(rState.query));
+    topbar.querySelector('.bb-filter-enabled').classList.toggle('is-active', rState.filter === 'enabled');
+    topbar.querySelector('.bb-filter-starred').classList.toggle('is-active', rState.filter === 'starred');
+    topbar.querySelector('.bb-batch-btn').classList.toggle('is-active', rState.batchMode);
+    renderBatchDrawer();
 }
 
 function renderBatchDrawer() {
@@ -250,7 +271,7 @@ function renderBatchDrawer() {
     el.innerHTML = `
         <span class="bb-batch-count">已选 <strong>${rState.selectedItems.size}</strong> 项</span>
         <select class="bb-batch-target text_pole">${options}</select>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${rState.selectedItems.size ? '' : 'disabled'}>确认移动</button>
+        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${rState.selectedItems.size ? '' : 'disabled'}>移动</button>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear">清空</button>
     `;
@@ -273,7 +294,7 @@ function enhanceAllRegexLists() {
 
     ensureRegexToolbar(regexContainer);
     ensureListObservers();
-    renderBatchDrawer();
+    syncRegexTopbar();
 
     rState.observers.forEach(item => item.observer.disconnect());
     try {
@@ -298,15 +319,21 @@ function enhanceSingleRegexContainer(listEl, cfg) {
     const store = getStore(cfg.storeScope);
     if (!nativeItems.length && !store.groups.length) return;
 
+    nativeItems.forEach((row, idx) => {
+        if (row.dataset.bbOrigIdx === undefined) {
+            row.dataset.bbOrigIdx = String(idx);
+        }
+    });
+    nativeItems.sort((a, b) => Number(a.dataset.bbOrigIdx) - Number(b.dataset.bbOrigIdx));
+
     const groupMap = new Map(store.groups.map(g => [g.id, g]));
     const itemsByGroup = new Map(store.groups.map(g => [g.id, []]));
-    const ungrouped = [];
+    const itemRecords = [];
     const forceExpand = Boolean(rState.query) || rState.filter !== 'all';
 
     for (const row of nativeItems) {
         const id = row.id;
         if (!id) continue;
-        // Refresh cached script name if native editor renamed it
         const titleAttr = row.querySelector('.regex_script_name')?.getAttribute('title');
         if (titleAttr) row.dataset.bbScriptName = titleAttr.trim();
 
@@ -324,21 +351,23 @@ function enhanceSingleRegexContainer(listEl, cfg) {
                 || (group?.name || '').toLowerCase().includes(rState.query));
 
         row.classList.toggle('bb-filter-hidden', !matchFilter);
-        row.classList.remove('bb-collapsed-hidden');
+        row.classList.remove('bb-collapsed-hidden', 'bb-grouped-child');
 
         decorateRegexRow(row, id, meta, group, cfg);
 
+        const rec = { row, id, enabled, matchFilter, group };
+        itemRecords.push(rec);
         if (group) {
-            itemsByGroup.get(group.id).push({ row, enabled, matchFilter });
-        } else {
-            ungrouped.push({ row, enabled, matchFilter });
+            itemsByGroup.get(group.id).push(rec);
         }
     }
 
     const frag = document.createDocumentFragment();
     const hiddenTail = [];
+    const placedGroups = new Set();
 
-    store.groups.forEach((group, idx) => {
+    const appendGroupBlock = (group) => {
+        placedGroups.add(group.id);
         const entries = itemsByGroup.get(group.id) || [];
         const visibleEntries = entries.filter(e => e.matchFilter);
         if (forceExpand && !visibleEntries.length && (!rState.query || !group.name.toLowerCase().includes(rState.query))) {
@@ -357,17 +386,12 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         gHeader.innerHTML = `
             <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
             <span class="bb-group-name">${esc(group.name)}</span>
+            <span class="bb-group-meta">(${enabledCount}/${entries.length})</span>
             ${group.exclusive ? '<span class="bb-tag bb-tag-exclusive" title="互斥单选组">互斥</span>' : ''}
-            <span class="bb-count-badge">${enabledCount}/${entries.length}</span>
             <span class="bb-group-controls">
-                <button type="button" class="bb-mini-btn" data-bb-act="up" ${idx === 0 ? 'disabled' : ''} title="上移分组"><i class="fa-solid fa-arrow-up"></i></button>
-                <button type="button" class="bb-mini-btn" data-bb-act="down" ${idx === store.groups.length - 1 ? 'disabled' : ''} title="下移分组"><i class="fa-solid fa-arrow-down"></i></button>
-                <button type="button" class="bb-mini-btn" data-bb-act="edit" title="编辑分组 / 互斥 / 备注"><i class="fa-solid fa-pen"></i></button>
-                <button type="button" class="bb-mini-btn bb-danger-btn" data-bb-act="del" title="删除分组"><i class="fa-solid fa-xmark"></i></button>
-                <label class="bb-switch-wrap" title="分组总开关">
-                    <input type="checkbox" class="bb-switch bb-regex-group-toggle" ${enabledCount > 0 ? 'checked' : ''} />
-                    <span class="bb-switch-slider"></span>
-                </label>
+                <span class="bb-group-toggle-icon fa-solid ${enabledCount > 0 ? 'fa-toggle-on is-on' : 'fa-toggle-off'}" data-bb-act="toggle" title="整组开关"></span>
+                <button type="button" class="bb-row-icon" data-bb-act="edit" title="编辑分组 / 互斥 / 备注"><i class="fa-solid fa-pen"></i></button>
+                <button type="button" class="bb-row-icon bb-danger-icon" data-bb-act="del" title="删除分组"><i class="fa-solid fa-trash"></i></button>
             </span>
         `;
         frag.appendChild(gHeader);
@@ -380,29 +404,25 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         }
 
         for (const entry of entries) {
+            entry.row.classList.add('bb-grouped-child');
             if (isCollapsed) entry.row.classList.add('bb-collapsed-hidden');
             frag.appendChild(entry.row);
         }
-    });
+    };
 
-    if (ungrouped.length) {
-        const visibleUngrouped = ungrouped.filter(e => e.matchFilter);
-        const isCollapsed = rState.ungroupedCollapsed[cfg.origin] && !forceExpand;
-        if (!forceExpand || visibleUngrouped.length) {
-            const enabledCount = ungrouped.filter(e => e.enabled).length;
-            const uHeader = document.createElement('div');
-            uHeader.className = 'bb-group-header bb-regex-group-header bb-ungrouped-header';
-            uHeader.dataset.bbOrigin = cfg.origin;
-            uHeader.innerHTML = `
-                <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
-                <span class="bb-group-name">未分组</span>
-                <span class="bb-count-badge">${enabledCount}/${ungrouped.length}</span>
-            `;
-            frag.appendChild(uHeader);
+    for (const group of store.groups) {
+        if ((itemsByGroup.get(group.id) || []).length === 0) {
+            appendGroupBlock(group);
         }
-        for (const entry of ungrouped) {
-            if (isCollapsed) entry.row.classList.add('bb-collapsed-hidden');
-            frag.appendChild(entry.row);
+    }
+
+    for (const rec of itemRecords) {
+        if (rec.group) {
+            if (!placedGroups.has(rec.group.id)) {
+                appendGroupBlock(rec.group);
+            }
+        } else {
+            frag.appendChild(rec.row);
         }
     }
 
@@ -505,35 +525,46 @@ function bindRegexContainerIfNeeded(regexContainer) {
     rState.rootObserver.observe(regexContainer, { childList: true });
 
     regexContainer.addEventListener('click', async (e) => {
+        if (e.target.closest('#bb_regex_toolbar')) return;
+
         const gHeader = e.target.closest('.bb-regex-group-header');
         if (gHeader) {
-            if (gHeader.classList.contains('bb-ungrouped-header')) {
-                const origin = gHeader.dataset.bbOrigin;
-                rState.ungroupedCollapsed[origin] = !rState.ungroupedCollapsed[origin];
-                scheduleEnhanceRegexLists();
-                return;
-            }
-
             const gid = gHeader.dataset.bbGroupId;
             const storeScope = gHeader.dataset.bbStoreScope;
+            const origin = gHeader.dataset.bbOrigin;
             const store = getStore(storeScope);
             const group = store.groups.find(g => g.id === gid);
             if (!group) return;
 
-            const actBtn = e.target.closest('[data-bb-act]');
-            if (actBtn) {
+            const actEl = e.target.closest('[data-bb-act]');
+            if (actEl) {
                 e.stopPropagation();
-                const act = actBtn.dataset.bbAct;
-                if (act === 'up' || act === 'down') {
-                    const idx = store.groups.findIndex(g => g.id === gid);
-                    const target = act === 'up' ? idx - 1 : idx + 1;
-                    if (target >= 0 && target < store.groups.length) {
-                        const [m] = store.groups.splice(idx, 1);
-                        store.groups.splice(target, 0, m);
-                        store.groups.forEach((g, i) => { g.order = i; });
-                        await persistStore(storeScope);
-                        scheduleEnhanceRegexLists();
+                const act = actEl.dataset.bbAct;
+                if (act === 'toggle') {
+                    const listEl = document.getElementById(CONTAINERS.find(c => c.origin === origin)?.id || '');
+                    if (!listEl) return;
+                    const memberRows = Array.from(listEl.querySelectorAll('.regex-script-label'))
+                        .filter(row => store.items[row.id]?.groupId === gid);
+                    const anyEnabled = memberRows.some(r => !r.querySelector('.disable_regex')?.checked);
+                    const nextEnabled = !anyEnabled;
+                    group.enabled = nextEnabled;
+
+                    let updates;
+                    if (nextEnabled && group.exclusive && memberRows.length > 1) {
+                        const keepId = memberRows[0].id;
+                        updates = memberRows.map(r => ({ id: r.id, origin, enabled: r.id === keepId }));
+                    } else {
+                        updates = memberRows.map(r => ({ id: r.id, origin, enabled: nextEnabled }));
                     }
+
+                    await batchSetRegexEnabled(updates);
+                    for (const u of updates) {
+                        const row = document.getElementById(u.id);
+                        const chk = row?.querySelector('.disable_regex');
+                        if (chk) chk.checked = !u.enabled;
+                    }
+                    await persistStore(storeScope);
+                    scheduleEnhanceRegexLists();
                 } else if (act === 'edit') {
                     const res = await openGroupDialog({ mode: 'edit', group });
                     if (res) {
@@ -556,7 +587,6 @@ function bindRegexContainerIfNeeded(regexContainer) {
                 return;
             }
 
-            if (e.target.closest('.bb-switch-wrap')) return;
             group.collapsed = !group.collapsed;
             scheduleEnhanceRegexLists();
             await persistStore(storeScope);
@@ -623,9 +653,9 @@ function bindRegexContainerIfNeeded(regexContainer) {
         }
     });
 
-    regexContainer.addEventListener('change', async (e) => {
+    regexContainer.addEventListener('change', (e) => {
+        if (e.target.closest('#bb_regex_toolbar')) return;
         const target = e.target;
-
         if (target.classList.contains('bb-batch-chk')) {
             const id = target.dataset.id;
             if (target.checked) {
@@ -634,42 +664,6 @@ function bindRegexContainerIfNeeded(regexContainer) {
                 rState.selectedItems.delete(id);
             }
             renderBatchDrawer();
-            return;
-        }
-
-        if (target.classList.contains('bb-regex-group-toggle')) {
-            const gHeader = target.closest('.bb-regex-group-header');
-            const gid = gHeader?.dataset?.bbGroupId;
-            const storeScope = gHeader?.dataset?.bbStoreScope;
-            const origin = gHeader?.dataset?.bbOrigin;
-            const listEl = document.getElementById(CONTAINERS.find(c => c.origin === origin)?.id || '');
-            const store = getStore(storeScope);
-            const group = store.groups.find(g => g.id === gid);
-            if (!group || !listEl) return;
-
-            const nextEnabled = Boolean(target.checked);
-            group.enabled = nextEnabled;
-
-            const memberRows = Array.from(listEl.querySelectorAll('.regex-script-label'))
-                .filter(row => store.items[row.id]?.groupId === gid);
-
-            let updates;
-            if (nextEnabled && group.exclusive && memberRows.length > 1) {
-                const alreadyOn = memberRows.find(r => !r.querySelector('.disable_regex')?.checked);
-                const keepId = (alreadyOn || memberRows[0]).id;
-                updates = memberRows.map(r => ({ id: r.id, origin, enabled: r.id === keepId }));
-            } else {
-                updates = memberRows.map(r => ({ id: r.id, origin, enabled: nextEnabled }));
-            }
-
-            await batchSetRegexEnabled(updates);
-            for (const u of updates) {
-                const row = document.getElementById(u.id);
-                const chk = row?.querySelector('.disable_regex');
-                if (chk) chk.checked = !u.enabled;
-            }
-            await persistStore(storeScope);
-            scheduleEnhanceRegexLists();
         }
     });
 }
