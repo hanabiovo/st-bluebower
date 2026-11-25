@@ -12,7 +12,7 @@ import { batchSetPromptsEnabled, setPromptEnabled } from './st-bridge.js';
 
 const pState = {
     initialized: false,
-    isEnhancing: false,
+    observer: null,
     rafId: null,
     filter: 'all', // 'all' | 'enabled' | 'starred'
     query: '',
@@ -339,7 +339,7 @@ function enhancePromptList() {
         return;
     }
 
-    pState.isEnhancing = true;
+    pState.observer?.disconnect();
     try {
         // Remove previous Bluebower headers/notes cleanly
         listEl.querySelectorAll('.bb-group-header, .bb-group-note-li').forEach(el => el.remove());
@@ -462,7 +462,7 @@ function enhancePromptList() {
 
         listEl.appendChild(frag);
     } finally {
-        pState.isEnhancing = false;
+        pState.observer?.observe(listEl, { childList: true });
     }
 }
 
@@ -716,9 +716,9 @@ export function initPromptEnhancer() {
     });
 
     const observer = new MutationObserver(() => {
-        if (pState.isEnhancing) return;
         scheduleEnhancePromptList();
     });
+    pState.observer = observer;
     observer.observe(listEl, { childList: true });
 
     scheduleEnhancePromptList();

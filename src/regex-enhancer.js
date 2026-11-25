@@ -17,7 +17,7 @@ const CONTAINERS = [
 
 const rState = {
     initialized: false,
-    isEnhancing: false,
+    observers: [],
     rafId: null,
     filter: 'all', // 'all' | 'enabled' | 'starred'
     query: '',
@@ -242,7 +242,7 @@ function enhanceAllRegexLists() {
     ensureRegexToolbar(regexContainer);
     renderBatchDrawer();
 
-    rState.isEnhancing = true;
+    rState.observers.forEach(item => item.observer.disconnect());
     try {
         for (const cfg of CONTAINERS) {
             const listEl = document.getElementById(cfg.id);
@@ -250,7 +250,7 @@ function enhanceAllRegexLists() {
             enhanceSingleRegexContainer(listEl, cfg);
         }
     } finally {
-        rState.isEnhancing = false;
+        rState.observers.forEach(item => item.observer.observe(item.el, { childList: true }));
     }
 }
 
@@ -609,14 +609,15 @@ export function initRegexEnhancer() {
         }
     });
 
+    rState.observers = [];
     for (const cfg of CONTAINERS) {
         const listEl = document.getElementById(cfg.id);
         if (!listEl) continue;
         const obs = new MutationObserver(() => {
-            if (rState.isEnhancing) return;
             scheduleEnhanceRegexLists();
         });
         obs.observe(listEl, { childList: true });
+        rState.observers.push({ el: listEl, observer: obs });
     }
 
     scheduleEnhanceRegexLists();
