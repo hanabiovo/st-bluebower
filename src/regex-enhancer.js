@@ -1,6 +1,7 @@
 import { openBatchMoveDialog, openGroupDialog, openItemDialog } from './dialog.js';
 import {
     getGlobalSettings,
+    getScopedRegexStore,
     loadPresetData,
     makeId,
     normalizeGroupStore,
@@ -52,11 +53,17 @@ function showNotice(text) {
 
 function getStore(storeScope) {
     if (storeScope === 'preset') {
-        if (!rState.presetData) rState.presetData = loadPresetData().data;
+        if (!rState.presetData) {
+            const loaded = loadPresetData();
+            rState.presetData = loaded.data;
+            if (loaded.migratedFromBaibai) {
+                savePresetDataDebounced(rState.presetData);
+            }
+        }
         return rState.presetData.regexGroups;
     }
     if (storeScope === 'scoped') {
-        return getGlobalSettings().scopedRegexGroups;
+        return getScopedRegexStore();
     }
     return getGlobalSettings().globalRegexGroups;
 }
@@ -389,7 +396,15 @@ function enhanceSingleRegexContainer(listEl, cfg) {
 
         decorateRegexRow(row, id, meta, group, cfg);
 
-        const rec = { row, id, enabled, matchFilter, group };
+        const rec = {
+            row,
+            id,
+            enabled,
+            matchFilter,
+            group,
+            origIdx: Number(row.dataset.bbOrigIdx) || 0,
+            order: typeof meta.order === 'number' ? meta.order : null,
+        };
         itemRecords.push(rec);
         if (group) {
             itemsByGroup.get(group.id).push(rec);
@@ -398,13 +413,19 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         }
     }
 
+    for (const entries of itemsByGroup.values()) {
+        entries.sort((a, b) => {
+            if (a.order !== null && b.order !== null && a.order !== b.order) {
+                return a.order - b.order;
+            }
+            return a.origIdx - b.origIdx;
+        });
+    }
+
     const frag = document.createDocumentFragment();
     const hiddenTail = [];
-    const placedGroups = new Set();
-    let placedDefaultGroup = false;
 
     const appendGroupBlock = (group) => {
-        placedGroups.add(group.id);
         const entries = itemsByGroup.get(group.id) || [];
         const visibleEntries = entries.filter(e => e.matchFilter);
         if (forceExpand && !visibleEntries.length && (!rState.query || !group.name.toLowerCase().includes(rState.query))) {
@@ -451,7 +472,6 @@ function enhanceSingleRegexContainer(listEl, cfg) {
     };
 
     const appendDefaultGroupBlock = () => {
-        placedDefaultGroup = true;
         const visibleEntries = ungroupedEntries.filter(e => e.matchFilter);
         if (forceExpand && !visibleEntries.length && (!rState.query || !'默认'.includes(rState.query))) {
             for (const e of ungroupedEntries) hiddenTail.push(e.row);
@@ -485,20 +505,12 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         }
     };
 
+    // Match ST-BaiBai-Tools regex group layout: named groups in `group.order`, then default-collapsed `默认` group at the bottom
     for (const group of store.groups) {
-        if ((itemsByGroup.get(group.id) || []).length === 0) {
-            appendGroupBlock(group);
-        }
+        appendGroupBlock(group);
     }
-
-    for (const rec of itemRecords) {
-        if (rec.group) {
-            if (!placedGroups.has(rec.group.id)) {
-                appendGroupBlock(rec.group);
-            }
-        } else if (!placedDefaultGroup) {
-            appendDefaultGroupBlock();
-        }
+    if (ungroupedEntries.length > 0) {
+        appendDefaultGroupBlock();
     }
 
     for (const row of hiddenTail) {
@@ -935,6 +947,12 @@ export function initRegexEnhancer() {
 }
 
 export function onRegexPresetChanged() {
-    rState.presetData = loadPresetData().data;
+    rState.selectedItems.clear();
+    rState.lastBatchId = null;
+    const loaded = loadPresetData();
+    rState.presetData = loaded.data;
+    if (loaded.migratedFromBaibai) {
+        savePresetDataDebounced(rState.presetData);
+    }
     initRegexEnhancer();
 }

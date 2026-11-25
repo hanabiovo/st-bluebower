@@ -13,6 +13,7 @@ import {
     savePresetData,
 } from './storage.js';
 import { onPromptPresetChanged } from './prompt-enhancer.js';
+import { onRegexPresetChanged } from './regex-enhancer.js';
 
 let miscExpanded = false;
 
@@ -83,7 +84,7 @@ function openQuickSettingsModal() {
             </label>
             <label class="bb-field-check">
                 <input type="checkbox" class="bb-qs-sync" ${gs.syncBaibai ? 'checked' : ''} />
-                <span>双向同步柏宝箱（ST-BaiBai-Tools）预设分组格式</span>
+                <span>双向同步柏宝箱（ST-BaiBai-Tools）预设与正则分组格式</span>
             </label>
             <div class="bb-ext-settings-actions">
                 <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-qs-reimport">
@@ -129,6 +130,7 @@ function openQuickSettingsModal() {
         if (res.imported) {
             await savePresetData(res.data);
             onPromptPresetChanged();
+            onRegexPresetChanged();
             statusEl.textContent = '已恢复为柏宝箱版分组';
         } else {
             statusEl.textContent = '当前预设未检测到柏宝箱分组数据';
@@ -193,7 +195,7 @@ export function initExtensionSettingsPanel() {
                     </label>
                     <label class="checkbox_label">
                         <input type="checkbox" id="bb_cfg_sync_baibai" ${gs.syncBaibai ? 'checked' : ''} />
-                        <span>双向同步柏宝箱（ST-BaiBai-Tools）预设分组格式</span>
+                        <span>双向同步柏宝箱（ST-BaiBai-Tools）预设与正则分组格式</span>
                     </label>
                     <div class="bb-ext-settings-actions">
                         <button type="button" id="bb_cfg_reimport_baibai" class="menu_button bb-btn-sm bb-drawer-btn">
@@ -238,6 +240,7 @@ export function initExtensionSettingsPanel() {
         if (res.imported) {
             await savePresetData(res.data);
             onPromptPresetChanged();
+            onRegexPresetChanged();
             showStatus('已恢复为柏宝箱版分组');
         } else {
             showStatus('当前预设未检测到柏宝箱分组数据');
