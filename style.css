@@ -93,19 +93,19 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .bb-toolbar-actions > .menu_button.bb-btn-sm,
 .bb-toolbar-actions > .bb-regex-target-scope {
     flex: 1 1 0;
-    min-width: max-content;
+    min-width: 0 !important;
     height: 28px !important;
 }
 
 .bb-toolbar-actions > .bb-settings-btn {
-    flex: 0 0 34px !important;
-    min-width: 34px !important;
+    flex: 0 0 32px !important;
+    min-width: 32px !important;
     padding: 0 !important;
 }
 
@@ -117,7 +117,7 @@
     justify-content: center !important;
     gap: 5px !important;
     width: auto !important;
-    min-width: max-content !important;
+    min-width: 0 !important;
     white-space: nowrap !important;
     padding: 0 10px !important;
     height: 28px !important;
@@ -557,6 +557,20 @@
     justify-content: flex-end;
     gap: 8px;
     margin-top: 4px;
+}
+
+.bb-dialog-footer .menu_button {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: auto !important;
+    min-width: 68px !important;
+    height: 30px !important;
+    padding: 0 14px !important;
+    margin: 0 !important;
+    white-space: nowrap !important;
+    border-radius: 6px !important;
 }
 
 @media (max-width: 600px) {

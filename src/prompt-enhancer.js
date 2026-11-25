@@ -12,7 +12,9 @@ import { batchSetPromptsEnabled, setPromptEnabled } from './st-bridge.js';
 
 const pState = {
     initialized: false,
-    observer: null,
+    containerObserver: null,
+    listObserver: null,
+    boundListEl: null,
     rafId: null,
     filter: 'all', // 'all' | 'enabled' | 'starred'
     query: '',
@@ -62,13 +64,14 @@ function loadCurrentPresetState() {
 }
 
 /**
- * Ensures the Bluebower toolbar and starred mirror container exist above `#completion_prompt_manager_list`.
+ * Ensures the Bluebower toolbar exists right before `#completion_prompt_manager`
+ * so `PromptManager.renderPromptManager()` never destroys it on chat/preset switch.
  * @param {HTMLElement} container `#completion_prompt_manager`
- * @param {HTMLElement} listEl `#completion_prompt_manager_list`
  */
-function ensurePromptChrome(container, listEl) {
-    if (!document.getElementById('bb_prompt_toolbar')) {
-        const toolbar = document.createElement('div');
+function ensurePromptChrome(container) {
+    let toolbar = document.getElementById('bb_prompt_toolbar');
+    if (!toolbar) {
+        toolbar = document.createElement('div');
         toolbar.id = 'bb_prompt_toolbar';
         toolbar.className = 'bb-native-toolbar';
         toolbar.innerHTML = `
@@ -92,12 +95,15 @@ function ensurePromptChrome(container, listEl) {
             <div class="bb-batch-drawer" id="bb_prompt_batch"></div>
             <div class="bb-starred-mirror" id="bb_prompt_starred"></div>
         `;
-        listEl.parentNode.insertBefore(toolbar, listEl);
-        bindToolbarEvents(toolbar, listEl);
+        container.parentNode.insertBefore(toolbar, container);
+        bindToolbarEvents(toolbar);
+    } else if (toolbar.nextElementSibling !== container) {
+        container.parentNode.insertBefore(toolbar, container);
     }
 }
 
-function bindToolbarEvents(toolbar, listEl) {
+function bindToolbarEvents(toolbar) {
+    const getListEl = () => document.getElementById('completion_prompt_manager_list');
     const searchInput = toolbar.querySelector('.bb-search');
     searchInput.addEventListener('input', () => {
         clearTimeout(pState.searchTimer);
@@ -146,7 +152,8 @@ function bindToolbarEvents(toolbar, listEl) {
         const gs = getGlobalSettings();
         gs.lockPromptOrder = locked;
         saveGlobalSettings();
-        applyLockOrderState(listEl, locked);
+        const currentList = getListEl();
+        if (currentList) applyLockOrderState(currentList, locked);
         updateLockButtonUI(toolbar, locked);
         await savePresetData(pState.presetData);
         showNotice(locked ? '已锁定拖拽排序' : '已解锁排序');
@@ -189,7 +196,7 @@ function bindToolbarEvents(toolbar, listEl) {
             pState.selectedIds.clear();
             scheduleEnhancePromptList();
         } else if (action === 'select-all') {
-            listEl.querySelectorAll('.completion_prompt_manager_prompt:not(.bb-collapsed-hidden):not(.bb-filter-hidden)').forEach(li => {
+            getListEl()?.querySelectorAll('.completion_prompt_manager_prompt:not(.bb-collapsed-hidden):not(.bb-filter-hidden)').forEach(li => {
                 if (li.dataset.pmIdentifier) pState.selectedIds.add(li.dataset.pmIdentifier);
             });
             scheduleEnhancePromptList();
@@ -227,7 +234,7 @@ function bindToolbarEvents(toolbar, listEl) {
         const toggleBtn = e.target.closest('.bb-mirror-toggle');
         if (toggleBtn) {
             const id = toggleBtn.dataset.id;
-            const realLi = listEl.querySelector(`.completion_prompt_manager_prompt[data-pm-identifier="${CSS.escape(id)}"]`);
+            const realLi = getListEl()?.querySelector(`.completion_prompt_manager_prompt[data-pm-identifier="${CSS.escape(id)}"]`);
             const nativeToggle = realLi?.querySelector('.prompt-manager-toggle-action');
             if (nativeToggle) {
                 nativeToggle.click();
@@ -319,11 +326,14 @@ export function scheduleEnhancePromptList() {
  */
 function enhancePromptList() {
     const container = document.getElementById('completion_prompt_manager');
-    const listEl = document.getElementById('completion_prompt_manager_list');
-    if (!container || !listEl) return;
+    if (!container) return;
 
     if (!pState.presetData) loadCurrentPresetState();
-    ensurePromptChrome(container, listEl);
+    ensurePromptChrome(container);
+
+    const listEl = document.getElementById('completion_prompt_manager_list');
+    if (!listEl) return;
+    bindListIfNeeded(listEl);
 
     const toolbar = document.getElementById('bb_prompt_toolbar');
     const locked = Boolean(pState.presetData.settings?.lockPromptOrder ?? true);
@@ -339,7 +349,7 @@ function enhancePromptList() {
         return;
     }
 
-    pState.observer?.disconnect();
+    pState.listObserver?.disconnect();
     try {
         // Remove previous Bluebower headers/notes cleanly
         listEl.querySelectorAll('.bb-group-header, .bb-group-note-li').forEach(el => el.remove());
@@ -462,7 +472,7 @@ function enhancePromptList() {
 
         listEl.appendChild(frag);
     } finally {
-        pState.observer?.observe(listEl, { childList: true });
+        pState.listObserver?.observe(listEl, { childList: true });
     }
 }
 
@@ -502,13 +512,14 @@ function renderStarredMirror(starred, forceExpand) {
  * Injects star, note, move-select or batch checkbox onto a native prompt `<li>`.
  */
 function decoratePromptItem(li, id, nameText, meta, groups) {
-    let extras = li.querySelector(':scope > .bb-item-extras');
+    const controls = li.querySelector('.prompt_manager_prompt_controls');
+    const host = controls || li;
+    let extras = host.querySelector(':scope > .bb-item-extras');
     if (!extras) {
         extras = document.createElement('span');
         extras.className = 'bb-item-extras';
-        const controls = li.querySelector('.prompt_manager_prompt_controls');
-        if (controls && controls.parentNode === li) {
-            li.insertBefore(extras, controls);
+        if (controls) {
+            controls.prepend(extras);
         } else {
             li.appendChild(extras);
         }
@@ -545,15 +556,16 @@ function decoratePromptItem(li, id, nameText, meta, groups) {
 }
 
 /**
- * Binds delegated interactions on `#completion_prompt_manager_list` and starts MutationObserver.
+ * Binds delegated interactions on a `#completion_prompt_manager_list` instance if not yet bound.
+ * @param {HTMLElement} listEl
  */
-export function initPromptEnhancer() {
-    if (pState.initialized) return;
-    const listEl = document.getElementById('completion_prompt_manager_list');
-    if (!listEl) return;
-    pState.initialized = true;
+function bindListIfNeeded(listEl) {
+    if (!listEl || pState.boundListEl === listEl) return;
+    pState.boundListEl = listEl;
 
-    loadCurrentPresetState();
+    if (pState.listObserver) {
+        pState.listObserver.disconnect();
+    }
 
     // Delegated click for group headers, item extras, and exclusive group mutual exclusion
     listEl.addEventListener('click', async (e) => {
@@ -718,8 +730,24 @@ export function initPromptEnhancer() {
     const observer = new MutationObserver(() => {
         scheduleEnhancePromptList();
     });
-    pState.observer = observer;
+    pState.listObserver = observer;
     observer.observe(listEl, { childList: true });
+}
+
+export function initPromptEnhancer() {
+    if (pState.initialized) return;
+    const container = document.getElementById('completion_prompt_manager');
+    if (!container) return;
+    pState.initialized = true;
+
+    loadCurrentPresetState();
+
+    // Watch #completion_prompt_manager itself because PromptManager.renderPromptManager()
+    // replaces its entire innerHTML (and #completion_prompt_manager_list) on chat/preset changes.
+    pState.containerObserver = new MutationObserver(() => {
+        scheduleEnhancePromptList();
+    });
+    pState.containerObserver.observe(container, { childList: true });
 
     scheduleEnhancePromptList();
 }
