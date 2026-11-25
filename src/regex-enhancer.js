@@ -91,11 +91,12 @@ function ensureRegexToolbar(regexContainer) {
     toolbar.className = 'bb-native-toolbar bb-regex-toolbar';
     toolbar.innerHTML = `
         <div class="bb-toolbar-row">
-            <input type="search" class="bb-search text_pole" placeholder="🐦 搜索正则脚本、分组或备注..." />
+            <span class="bb-brand-badge" title="园丁鸟 (Bluebower)"><i class="fa-solid fa-dove"></i></span>
+            <input type="search" class="bb-search text_pole" placeholder="搜索正则脚本、分组或备注..." />
             <div class="bb-pill-group">
                 <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
                 <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
-                <button type="button" class="bb-pill" data-filter="starred">★</button>
+                <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
             </div>
         </div>
         <div class="bb-toolbar-row bb-toolbar-actions">
@@ -103,8 +104,8 @@ function ensureRegexToolbar(regexContainer) {
                 <option value="preset">预设正则组</option>
                 <option value="global">全局/角色组</option>
             </select>
-            <button type="button" class="menu_button bb-btn-sm bb-new-group-btn">+ 分组</button>
-            <button type="button" class="menu_button bb-btn-sm bb-batch-btn">批量整理</button>
+            <button type="button" class="menu_button bb-btn-sm bb-new-group-btn"><i class="fa-solid fa-plus"></i><span>分组</span></button>
+            <button type="button" class="menu_button bb-btn-sm bb-batch-btn"><i class="fa-solid fa-list-check"></i><span>批量整理</span></button>
             <span class="bb-inline-notice"></span>
         </div>
         <div class="bb-batch-drawer" id="bb_regex_batch"></div>
@@ -315,15 +316,15 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         gHeader.dataset.bbStoreScope = cfg.storeScope;
         gHeader.dataset.bbOrigin = cfg.origin;
         gHeader.innerHTML = `
-            <span class="bb-chevron">${isCollapsed ? '▸' : '▾'}</span>
+            <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
             <span class="bb-group-name">${esc(group.name)}</span>
             ${group.exclusive ? '<span class="bb-tag bb-tag-exclusive" title="互斥单选组">互斥</span>' : ''}
             <span class="bb-count-badge">${enabledCount}/${entries.length}</span>
             <span class="bb-group-controls">
-                <button type="button" class="bb-mini-btn" data-bb-act="up" ${idx === 0 ? 'disabled' : ''} title="上移分组">↑</button>
-                <button type="button" class="bb-mini-btn" data-bb-act="down" ${idx === store.groups.length - 1 ? 'disabled' : ''} title="下移分组">↓</button>
-                <button type="button" class="bb-mini-btn" data-bb-act="edit" title="编辑分组 / 互斥 / 备注">✎</button>
-                <button type="button" class="bb-mini-btn bb-danger-btn" data-bb-act="del" title="删除分组">✕</button>
+                <button type="button" class="bb-mini-btn" data-bb-act="up" ${idx === 0 ? 'disabled' : ''} title="上移分组"><i class="fa-solid fa-arrow-up"></i></button>
+                <button type="button" class="bb-mini-btn" data-bb-act="down" ${idx === store.groups.length - 1 ? 'disabled' : ''} title="下移分组"><i class="fa-solid fa-arrow-down"></i></button>
+                <button type="button" class="bb-mini-btn" data-bb-act="edit" title="编辑分组 / 互斥 / 备注"><i class="fa-solid fa-pen"></i></button>
+                <button type="button" class="bb-mini-btn bb-danger-btn" data-bb-act="del" title="删除分组"><i class="fa-solid fa-xmark"></i></button>
                 <label class="bb-switch-wrap" title="分组总开关">
                     <input type="checkbox" class="bb-switch bb-regex-group-toggle" ${enabledCount > 0 ? 'checked' : ''} />
                     <span class="bb-switch-slider"></span>
@@ -354,7 +355,7 @@ function enhanceSingleRegexContainer(listEl, cfg) {
             uHeader.className = 'bb-group-header bb-regex-group-header bb-ungrouped-header';
             uHeader.dataset.bbOrigin = cfg.origin;
             uHeader.innerHTML = `
-                <span class="bb-chevron">${isCollapsed ? '▸' : '▾'}</span>
+                <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
                 <span class="bb-group-name">未分组</span>
                 <span class="bb-count-badge">${enabledCount}/${ungrouped.length}</span>
             `;
@@ -419,8 +420,8 @@ function decorateRegexRow(row, id, meta, groups, cfg) {
 
     extras.innerHTML = `
         ${rState.batchMode ? `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" data-origin="${cfg.origin}" data-scope="${cfg.storeScope}" ${rState.selectedItems.has(id) ? 'checked' : ''} />` : ''}
-        <button type="button" class="bb-star-btn ${meta?.starred ? 'is-starred' : ''}" data-bb-regex-act="star" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="星标">${meta?.starred ? '★' : '☆'}</button>
-        <button type="button" class="bb-mini-btn bb-note-btn ${meta?.note ? 'has-note' : ''}" data-bb-regex-act="note" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="${meta?.note ? esc(meta.note) : '添加备注'}">📝</button>
+        <button type="button" class="bb-star-btn ${meta?.starred ? 'is-starred' : ''}" data-bb-regex-act="star" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="星标"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
+        <button type="button" class="bb-mini-btn bb-note-btn ${meta?.note ? 'has-note' : ''}" data-bb-regex-act="note" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="${meta?.note ? esc(meta.note) : '添加备注'}"><i class="fa-regular fa-note-sticky"></i></button>
         ${!rState.batchMode ? `<select class="bb-move-select bb-regex-move" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="移动到分组">${groupOptions}</select>` : ''}
     `;
 }

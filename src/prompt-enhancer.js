@@ -73,18 +73,19 @@ function ensurePromptChrome(container, listEl) {
         toolbar.className = 'bb-native-toolbar';
         toolbar.innerHTML = `
             <div class="bb-toolbar-row">
-                <input type="search" class="bb-search text_pole" placeholder="🐦 搜索预设条目、分组或备注..." />
+                <span class="bb-brand-badge" title="园丁鸟 (Bluebower)"><i class="fa-solid fa-dove"></i></span>
+                <input type="search" class="bb-search text_pole" placeholder="搜索预设条目、分组或备注..." />
                 <div class="bb-pill-group">
                     <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
                     <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
-                    <button type="button" class="bb-pill" data-filter="starred">★</button>
+                    <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
                 </div>
             </div>
             <div class="bb-toolbar-row bb-toolbar-actions">
-                <button type="button" class="menu_button bb-btn-sm bb-new-group-btn" title="新建分组">+ 分组</button>
-                <button type="button" class="menu_button bb-btn-sm bb-batch-btn" title="批量移动条目到分组">批量整理</button>
-                <button type="button" class="menu_button bb-btn-sm bb-lock-btn" title="锁定/解锁条目拖拽排序">🔒 已锁序</button>
-                <button type="button" class="menu_button bb-btn-sm bb-settings-btn" title="柏宝箱兼容设置">⚙</button>
+                <button type="button" class="menu_button bb-btn-sm bb-new-group-btn" title="新建分组"><i class="fa-solid fa-plus"></i><span>分组</span></button>
+                <button type="button" class="menu_button bb-btn-sm bb-batch-btn" title="批量移动条目到分组"><i class="fa-solid fa-list-check"></i><span>批量整理</span></button>
+                <button type="button" class="menu_button bb-btn-sm bb-lock-btn" title="锁定/解锁条目拖拽排序"><i class="fa-solid fa-lock"></i><span>已锁序</span></button>
+                <button type="button" class="menu_button bb-btn-sm bb-settings-btn" title="柏宝箱兼容设置"><i class="fa-solid fa-gear"></i></button>
                 <span class="bb-inline-notice"></span>
             </div>
             <div class="bb-settings-drawer" id="bb_prompt_settings"></div>
@@ -239,7 +240,9 @@ function updateLockButtonUI(toolbar, locked) {
     const btn = toolbar.querySelector('.bb-lock-btn');
     if (!btn) return;
     btn.classList.toggle('is-active', locked);
-    btn.textContent = locked ? '🔒 已锁序' : '🔓 可调序';
+    btn.innerHTML = locked
+        ? '<i class="fa-solid fa-lock"></i><span>已锁序</span>'
+        : '<i class="fa-solid fa-lock-open"></i><span>可调序</span>';
 }
 
 function applyLockOrderState(listEl, locked) {
@@ -405,16 +408,16 @@ function enhancePromptList() {
             gHeader.className = `bb-group-header ${group.enabled ? '' : 'is-group-disabled'}`;
             gHeader.dataset.bbGroupId = group.id;
             gHeader.innerHTML = `
-                <span class="bb-chevron">${isCollapsed ? '▸' : '▾'}</span>
+                <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
                 <span class="bb-group-name">${esc(group.name)}</span>
                 ${group.exclusive ? '<span class="bb-tag bb-tag-exclusive" title="互斥单选组">互斥</span>' : ''}
                 <span class="bb-count-badge">${enabledCount}/${entries.length}</span>
                 ${tokenSum > 0 ? `<span class="bb-token-badge" title="已启用条目 Token 总计">~${formatTokens(tokenSum)}</span>` : ''}
                 <span class="bb-group-controls">
-                    <button type="button" class="bb-mini-btn" data-bb-act="up" ${idx === 0 ? 'disabled' : ''} title="上移分组">↑</button>
-                    <button type="button" class="bb-mini-btn" data-bb-act="down" ${idx === store.groups.length - 1 ? 'disabled' : ''} title="下移分组">↓</button>
-                    <button type="button" class="bb-mini-btn" data-bb-act="edit" title="编辑分组 / 互斥 / 备注">✎</button>
-                    <button type="button" class="bb-mini-btn bb-danger-btn" data-bb-act="del" title="删除分组">✕</button>
+                    <button type="button" class="bb-mini-btn" data-bb-act="up" ${idx === 0 ? 'disabled' : ''} title="上移分组"><i class="fa-solid fa-arrow-up"></i></button>
+                    <button type="button" class="bb-mini-btn" data-bb-act="down" ${idx === store.groups.length - 1 ? 'disabled' : ''} title="下移分组"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button type="button" class="bb-mini-btn" data-bb-act="edit" title="编辑分组 / 互斥 / 备注"><i class="fa-solid fa-pen"></i></button>
+                    <button type="button" class="bb-mini-btn bb-danger-btn" data-bb-act="del" title="删除分组"><i class="fa-solid fa-xmark"></i></button>
                     <label class="bb-switch-wrap" title="分组总开关">
                         <input type="checkbox" class="bb-switch bb-group-toggle" ${enabledCount > 0 ? 'checked' : ''} />
                         <span class="bb-switch-slider"></span>
@@ -445,7 +448,7 @@ function enhancePromptList() {
                 const uHeader = document.createElement('li');
                 uHeader.className = 'bb-group-header bb-ungrouped-header';
                 uHeader.innerHTML = `
-                    <span class="bb-chevron">${isCollapsed ? '▸' : '▾'}</span>
+                    <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
                     <span class="bb-group-name">未分组</span>
                     <span class="bb-count-badge">${enabledCount}/${ungrouped.length}</span>
                 `;
@@ -473,15 +476,15 @@ function renderStarredMirror(starred, forceExpand) {
     const isCollapsed = pState.starredCollapsed && !forceExpand;
     box.innerHTML = `
         <div class="bb-starred-header">
-            <span class="bb-chevron">${isCollapsed ? '▸' : '▾'}</span>
-            <span class="bb-group-name">★ 常用置顶</span>
+            <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
+            <span class="bb-group-name"><i class="fa-solid fa-star bb-star-icon"></i> 常用置顶</span>
             <span class="bb-count-badge">${starred.length}</span>
         </div>
         ${isCollapsed ? '' : `
             <div class="bb-starred-items">
                 ${starred.map(s => `
                     <div class="bb-starred-row ${s.enabled ? '' : 'is-disabled'}">
-                        <button type="button" class="bb-star-mirror-unstar" data-id="${esc(s.id)}" title="取消星标">★</button>
+                        <button type="button" class="bb-star-mirror-unstar" data-id="${esc(s.id)}" title="取消星标"><i class="fa-solid fa-star"></i></button>
                         <span class="bb-starred-name" title="${esc(s.name)}">${esc(s.name)}</span>
                         ${s.note ? `<span class="bb-starred-note">${esc(s.note)}</span>` : ''}
                         ${s.tokenVal > 0 ? `<span class="bb-token-mini">${formatTokens(s.tokenVal)}</span>` : ''}
@@ -518,8 +521,8 @@ function decoratePromptItem(li, id, nameText, meta, groups) {
 
     extras.innerHTML = `
         ${pState.batchMode ? `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" ${pState.selectedIds.has(id) ? 'checked' : ''} />` : ''}
-        <button type="button" class="bb-star-btn ${meta?.starred ? 'is-starred' : ''}" data-bb-item-act="star" data-id="${esc(id)}" title="星标置顶">${meta?.starred ? '★' : '☆'}</button>
-        <button type="button" class="bb-mini-btn bb-note-btn ${meta?.note ? 'has-note' : ''}" data-bb-item-act="note" data-id="${esc(id)}" title="${meta?.note ? esc(meta.note) : '添加备注'}">📝</button>
+        <button type="button" class="bb-star-btn ${meta?.starred ? 'is-starred' : ''}" data-bb-item-act="star" data-id="${esc(id)}" title="星标置顶"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
+        <button type="button" class="bb-mini-btn bb-note-btn ${meta?.note ? 'has-note' : ''}" data-bb-item-act="note" data-id="${esc(id)}" title="${meta?.note ? esc(meta.note) : '添加备注'}"><i class="fa-regular fa-note-sticky"></i></button>
         ${!pState.batchMode ? `<select class="bb-move-select" data-id="${esc(id)}" title="移动到分组">${groupOptions}</select>` : ''}
     `;
 

@@ -32,6 +32,16 @@
     flex-wrap: wrap;
 }
 
+.bb-brand-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #60a5fa;
+    font-size: 1.05em;
+    flex-shrink: 0;
+    padding: 0 2px;
+}
+
 .bb-toolbar-row .bb-search {
     flex: 1 1 160px;
     min-width: 130px;
@@ -43,6 +53,7 @@
 .bb-pill-group {
     display: inline-flex;
     gap: 4px;
+    flex-shrink: 0;
 }
 
 .bb-pill {
@@ -52,6 +63,7 @@
     border-radius: 999px;
     padding: 3px 9px;
     font-size: 0.84em;
+    white-space: nowrap;
     cursor: pointer;
     transition: background 0.15s ease, border-color 0.15s ease;
 }
@@ -68,10 +80,21 @@
     border-color: rgba(74, 158, 255, 0.55) !important;
 }
 
+.bb-native-toolbar .menu_button.bb-btn-sm,
 .bb-btn-sm {
-    padding: 3px 8px !important;
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 5px !important;
+    width: auto !important;
+    min-width: max-content !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    padding: 4px 9px !important;
     font-size: 0.84em !important;
     margin: 0 !important;
+    line-height: 1.2 !important;
 }
 
 .bb-btn-primary {
@@ -201,23 +224,31 @@
     padding: 0 2px;
 }
 
-/* Group header inserted directly in native lists */
+/* Group header inserted directly in native lists (override ST li grid layout) */
+#completion_prompt_manager_list > li.bb-group-header,
 .bb-group-header {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 7px 0 3px;
-    padding: 6px 9px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
-    border-radius: 7px;
-    background: rgba(128, 128, 128, 0.12);
+    list-style: none !important;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    grid-template-columns: none !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 6px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    margin: 7px 0 3px !important;
+    padding: 6px 9px !important;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15)) !important;
+    border-radius: 7px !important;
+    background: rgba(128, 128, 128, 0.12) !important;
     cursor: pointer;
     user-select: none;
 }
 
+#completion_prompt_manager_list > li.bb-group-header:hover,
 .bb-group-header:hover {
-    background: rgba(128, 128, 128, 0.2);
+    background: rgba(128, 128, 128, 0.2) !important;
 }
 
 .bb-group-header.is-group-disabled .bb-group-name {
@@ -225,10 +256,11 @@
 }
 
 .bb-chevron {
-    width: 12px;
+    width: 14px;
     text-align: center;
-    opacity: 0.75;
+    opacity: 0.78;
     flex-shrink: 0;
+    font-size: 0.82em;
 }
 
 .bb-group-name {
@@ -247,6 +279,7 @@
     border-radius: 999px;
     background: rgba(128, 128, 128, 0.18);
     white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .bb-token-badge {
@@ -262,9 +295,13 @@
     flex-shrink: 0;
 }
 
+#completion_prompt_manager_list > li.bb-group-note-li,
 .bb-group-note-li {
-    list-style: none;
-    padding: 2px 10px 4px 24px;
+    list-style: none !important;
+    display: block !important;
+    grid-template-columns: none !important;
+    width: 100% !important;
+    padding: 2px 10px 4px 24px !important;
     font-size: 0.8em;
     opacity: 0.68;
 }
