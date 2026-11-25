@@ -1,8 +1,9 @@
 /**
- * Lightweight inline modal dialog for creating/editing groups and item settings.
+ * Lightweight inline modal dialogs & floating ellipsis popover menu.
  */
 
 let dialogBackdrop = null;
+let activePopMenu = null;
 
 function esc(str) {
     return String(str ?? '')
@@ -13,9 +14,86 @@ function esc(str) {
 }
 
 /**
+ * Closes any open floating ellipsis menu.
+ */
+export function closePopMenu() {
+    if (activePopMenu) {
+        activePopMenu.cleanup();
+        activePopMenu = null;
+    }
+}
+
+/**
+ * Opens a compact floating action menu anchored to an ellipsis button.
+ * @param {HTMLElement} anchorEl
+ * @param {Array<{ key: string, icon: string, label: string, danger?: boolean }>} actions
+ * @param {(key: string) => void} onSelect
+ */
+export function openPopMenu(anchorEl, actions, onSelect) {
+    if (activePopMenu && activePopMenu.anchorEl === anchorEl) {
+        closePopMenu();
+        return;
+    }
+    closePopMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'bb-pop-menu';
+    menu.innerHTML = actions.map(a => `
+        <button type="button" class="bb-pop-item ${a.danger ? 'is-danger' : ''}" data-key="${esc(a.key)}">
+            <i class="${esc(a.icon)}"></i>
+            <span>${esc(a.label)}</span>
+        </button>
+    `).join('');
+
+    document.body.appendChild(menu);
+
+    const rect = anchorEl.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    let top = rect.bottom + 4;
+    let left = rect.right - menuRect.width;
+    if (top + menuRect.height > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - menuRect.height - 4);
+    }
+    if (left < 8) left = 8;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.left = `${Math.round(left)}px`;
+
+    const onDocClick = (e) => {
+        if (!menu.contains(e.target) && !anchorEl.contains(e.target)) {
+            closePopMenu();
+        }
+    };
+    const onScrollOrKey = (e) => {
+        if (e.type === 'keydown' && e.key !== 'Escape') return;
+        closePopMenu();
+    };
+
+    const cleanup = () => {
+        document.removeEventListener('pointerdown', onDocClick, true);
+        document.removeEventListener('keydown', onScrollOrKey);
+        window.removeEventListener('scroll', onScrollOrKey, true);
+        menu.remove();
+    };
+
+    menu.addEventListener('click', (e) => {
+        const btn = e.target.closest('.bb-pop-item');
+        if (!btn) return;
+        const key = btn.dataset.key;
+        closePopMenu();
+        onSelect(key);
+    });
+
+    setTimeout(() => {
+        document.addEventListener('pointerdown', onDocClick, true);
+        document.addEventListener('keydown', onScrollOrKey);
+        window.addEventListener('scroll', onScrollOrKey, true);
+    }, 0);
+
+    activePopMenu = { anchorEl, cleanup };
+}
+
+/**
  * Opens a small centered dialog for creating or editing a group.
- * @param {{ mode: 'create' | 'edit', group?: Object, scopeOptions?: Array<{ value: string, label: string }>, defaultScope?: string }} options
- * @returns {Promise<{ name: string, note: string, exclusive: boolean, scope: string } | null>}
  */
 export function openGroupDialog({ mode, group = null, scopeOptions = null, defaultScope = 'preset' }) {
     const scopeFieldHtml = Array.isArray(scopeOptions) && scopeOptions.length ? `
@@ -62,8 +140,6 @@ export function openGroupDialog({ mode, group = null, scopeOptions = null, defau
 
 /**
  * Opens a small centered dialog for editing an item's group assignment and personal note.
- * @param {{ itemName: string, note?: string, groupId?: string | null, groups?: Array }} options
- * @returns {Promise<{ note: string, groupId: string | null } | null>}
  */
 export function openItemDialog({ itemName, note = '', groupId = null, groups = [] }) {
     const groupOptions = [
@@ -73,7 +149,7 @@ export function openItemDialog({ itemName, note = '', groupId = null, groups = [
 
     return openFormDialog(`
         <form class="bb-dialog-card">
-            <div class="bb-dialog-title">条目设置 · ${esc(itemName)}</div>
+            <div class="bb-dialog-title">分组与备注 · ${esc(itemName)}</div>
             <label class="bb-field">
                 <span>所属分组</span>
                 <select name="groupId" class="text_pole">${groupOptions}</select>
@@ -95,6 +171,7 @@ export function openItemDialog({ itemName, note = '', groupId = null, groups = [
 
 function openFormDialog(html, extractor) {
     return new Promise((resolve) => {
+        closePopMenu();
         if (dialogBackdrop) {
             dialogBackdrop.remove();
             dialogBackdrop = null;

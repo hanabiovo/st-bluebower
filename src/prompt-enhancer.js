@@ -1,7 +1,6 @@
-import { openGroupDialog, openItemDialog } from './dialog.js';
+import { openGroupDialog, openItemDialog, openPopMenu } from './dialog.js';
 import {
     getGlobalSettings,
-    importFromBaibai,
     loadPresetData,
     makeId,
     normalizeGroupStore,
@@ -23,10 +22,8 @@ const pState = {
     query: '',
     batchMode: false,
     selectedIds: new Set(),
-    settingsOpen: false,
     starredCollapsed: false,
     presetData: null,
-    hasBaibaiData: false,
     searchTimer: null,
     noticeTimer: null,
 };
@@ -57,7 +54,6 @@ function showNotice(text) {
 function loadCurrentPresetState() {
     const loaded = loadPresetData();
     pState.presetData = loaded.data;
-    pState.hasBaibaiData = loaded.hasBaibaiData;
     if (loaded.migratedFromBaibai) {
         savePresetData(pState.presetData).then(() => {
             showNotice('已自动迁移柏宝箱分组');
@@ -65,10 +61,6 @@ function loadCurrentPresetState() {
     }
 }
 
-/**
- * Creates (once) the sleek top header `<li>` integrated right inside `#completion_prompt_manager_list`.
- * @returns {HTMLLIElement}
- */
 function ensureTopbarLi() {
     if (pState.topbarLi) return pState.topbarLi;
 
@@ -83,19 +75,20 @@ function ensureTopbarLi() {
                 <span class="bb-inline-notice"></span>
             </div>
             <div class="bb-topbar-icons">
-                <button type="button" class="bb-head-icon bb-search-toggle" title="搜索条目、分组或备注"><i class="fa-solid fa-magnifying-glass"></i></button>
-                <button type="button" class="bb-head-icon bb-filter-enabled" title="仅显示已启用条目"><i class="fa-solid fa-bolt"></i></button>
-                <button type="button" class="bb-head-icon bb-filter-starred" title="仅显示星标条目"><i class="fa-solid fa-star"></i></button>
+                <button type="button" class="bb-head-icon bb-search-toggle" title="搜索与筛选"><i class="fa-solid fa-magnifying-glass"></i></button>
                 <button type="button" class="bb-head-icon bb-new-group-btn" title="新建分组"><i class="fa-solid fa-folder-plus"></i></button>
-                <button type="button" class="bb-head-icon bb-batch-btn" title="批量移动条目到分组"><i class="fa-solid fa-list-check"></i></button>
+                <button type="button" class="bb-head-icon bb-batch-btn" title="批量移动条目"><i class="fa-solid fa-list-check"></i></button>
                 <button type="button" class="bb-head-icon bb-lock-btn" title="切换分组折叠 / 原始顺序拖拽"><i class="fa-solid fa-lock"></i></button>
-                <button type="button" class="bb-head-icon bb-settings-btn" title="柏宝箱兼容设置"><i class="fa-solid fa-gear"></i></button>
             </div>
         </div>
         <div class="bb-search-drawer">
-            <input type="search" class="bb-search text_pole" placeholder="搜索预设条目、分组或备注..." />
+            <input type="search" class="bb-search text_pole" placeholder="搜索条目、分组或备注..." />
+            <div class="bb-filter-pills">
+                <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
+                <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
+                <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
+            </div>
         </div>
-        <div class="bb-settings-drawer" id="bb_prompt_settings"></div>
         <div class="bb-batch-drawer" id="bb_prompt_batch"></div>
         <div class="bb-starred-mirror" id="bb_prompt_starred"></div>
     `;
@@ -111,14 +104,13 @@ function bindTopbarEvents(topbar) {
 
     topbar.querySelector('.bb-search-toggle').addEventListener('click', () => {
         pState.searchOpen = !pState.searchOpen;
-        if (!pState.searchOpen && pState.query) {
+        if (!pState.searchOpen && (pState.query || pState.filter !== 'all')) {
             pState.query = '';
+            pState.filter = 'all';
             searchInput.value = '';
         }
         scheduleEnhancePromptList();
-        if (pState.searchOpen) {
-            setTimeout(() => searchInput.focus(), 20);
-        }
+        if (pState.searchOpen) setTimeout(() => searchInput.focus(), 20);
     });
 
     searchInput.addEventListener('input', () => {
@@ -129,14 +121,11 @@ function bindTopbarEvents(topbar) {
         }, 100);
     });
 
-    topbar.querySelector('.bb-filter-enabled').addEventListener('click', () => {
-        pState.filter = pState.filter === 'enabled' ? 'all' : 'enabled';
-        scheduleEnhancePromptList();
-    });
-
-    topbar.querySelector('.bb-filter-starred').addEventListener('click', () => {
-        pState.filter = pState.filter === 'starred' ? 'all' : 'starred';
-        scheduleEnhancePromptList();
+    topbar.querySelectorAll('.bb-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+            pState.filter = pill.dataset.filter;
+            scheduleEnhancePromptList();
+        });
     });
 
     topbar.querySelector('.bb-new-group-btn').addEventListener('click', async () => {
@@ -172,34 +161,6 @@ function bindTopbarEvents(topbar) {
         await savePresetData(pState.presetData);
         scheduleEnhancePromptList();
         showNotice(locked ? '已开启分组折叠' : '已切换为原序拖拽模式');
-    });
-
-    topbar.querySelector('.bb-settings-btn').addEventListener('click', () => {
-        pState.settingsOpen = !pState.settingsOpen;
-        syncTopbarControls(0, 0);
-    });
-
-    topbar.querySelector('#bb_prompt_settings').addEventListener('change', (e) => {
-        if (e.target.classList.contains('bb-sync-baibai-chk')) {
-            const gs = getGlobalSettings();
-            gs.syncBaibai = Boolean(e.target.checked);
-            saveGlobalSettings();
-            showNotice(gs.syncBaibai ? '已开启柏宝箱双向同步' : '已关闭柏宝箱同步');
-        }
-    });
-
-    topbar.querySelector('#bb_prompt_settings').addEventListener('click', async (e) => {
-        if (e.target.closest('.bb-reimport-baibai-btn')) {
-            const res = importFromBaibai(pState.presetData);
-            if (res.imported) {
-                pState.presetData = res.data;
-                await savePresetData(pState.presetData);
-                scheduleEnhancePromptList();
-                showNotice('已从柏宝箱重新导入分组');
-            } else {
-                showNotice('当前预设未检测到柏宝箱分组');
-            }
-        }
     });
 
     topbar.querySelector('#bb_prompt_batch').addEventListener('click', async (e) => {
@@ -264,12 +225,13 @@ function syncTopbarControls(enabledTotal, totalCount) {
             : `原序调序 (${enabledTotal}/${totalCount})`;
     }
 
-    topbar.querySelector('.bb-search-toggle').classList.toggle('is-active', pState.searchOpen || Boolean(pState.query));
-    topbar.querySelector('.bb-search-drawer').classList.toggle('is-open', pState.searchOpen || Boolean(pState.query));
-    topbar.querySelector('.bb-filter-enabled').classList.toggle('is-active', pState.filter === 'enabled');
-    topbar.querySelector('.bb-filter-starred').classList.toggle('is-active', pState.filter === 'starred');
+    const hasSearchOrFilter = pState.searchOpen || Boolean(pState.query) || pState.filter !== 'all';
+    topbar.querySelector('.bb-search-toggle').classList.toggle('is-active', hasSearchOrFilter);
+    topbar.querySelector('.bb-search-drawer').classList.toggle('is-open', hasSearchOrFilter);
+    topbar.querySelectorAll('.bb-pill').forEach(p => {
+        p.classList.toggle('is-active', p.dataset.filter === pState.filter);
+    });
     topbar.querySelector('.bb-batch-btn').classList.toggle('is-active', pState.batchMode);
-    topbar.querySelector('.bb-settings-btn').classList.toggle('is-active', pState.settingsOpen);
 
     const lockBtn = topbar.querySelector('.bb-lock-btn');
     lockBtn.classList.toggle('is-active', !locked);
@@ -278,7 +240,6 @@ function syncTopbarControls(enabledTotal, totalCount) {
         : '<i class="fa-solid fa-lock-open"></i>';
     lockBtn.title = locked ? '当前：分组折叠（点击切换为原序拖拽）' : '当前：原序拖拽（点击返回分组折叠）';
 
-    renderSettingsDrawer();
     renderBatchDrawer();
 }
 
@@ -294,27 +255,6 @@ function applyLockOrderState(listEl, locked) {
             // Ignore if sortable is not initialized yet
         }
     }
-}
-
-function renderSettingsDrawer() {
-    const el = pState.topbarLi?.querySelector('#bb_prompt_settings');
-    if (!el) return;
-    if (!pState.settingsOpen) {
-        el.innerHTML = '';
-        el.classList.remove('is-open');
-        return;
-    }
-    const gs = getGlobalSettings();
-    el.classList.add('is-open');
-    el.innerHTML = `
-        <label class="bb-setting-check" title="开启后，修改分组会同步写回 baibaiToolkit.presetPromptGroups">
-            <input type="checkbox" class="bb-sync-baibai-chk" ${gs.syncBaibai ? 'checked' : ''} />
-            <span>双向同步柏宝箱格式</span>
-        </label>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-reimport-baibai-btn" ${pState.hasBaibaiData ? '' : 'disabled'}>
-            重导柏宝箱分组
-        </button>
-    `;
 }
 
 function renderBatchDrawer() {
@@ -356,10 +296,6 @@ export function scheduleEnhancePromptList() {
     });
 }
 
-/**
- * Groups and folds native `.completion_prompt_manager_prompt` items in-place,
- * strictly preserving the author's original `prompt_order` sequence for both groups and items.
- */
 function enhancePromptList() {
     const container = document.getElementById('completion_prompt_manager');
     if (!container) return;
@@ -379,7 +315,6 @@ function enhancePromptList() {
 
     pState.listObserver?.disconnect();
     try {
-        // Hide redundant native "名称 / Token" header when our sleek topbar is active
         const headLi = listEl.querySelector('.completion_prompt_manager_list_head');
         const sepLi = listEl.querySelector('.completion_prompt_manager_list_separator');
         if (headLi) headLi.classList.add('bb-native-head-hidden');
@@ -396,7 +331,6 @@ function enhancePromptList() {
             return;
         }
 
-        // Record true prompt_order position on initial render
         nativeItems.forEach((li, idx) => {
             if (li.dataset.bbOrigIdx === undefined) {
                 li.dataset.bbOrigIdx = String(idx);
@@ -455,7 +389,6 @@ function enhancePromptList() {
         if (headLi) frag.appendChild(headLi);
         if (sepLi) frag.appendChild(sepLi);
 
-        // Raw-order draggable mode: render all items flat in exact prompt_order
         if (!locked) {
             for (const rec of itemRecords) {
                 frag.appendChild(rec.li);
@@ -511,15 +444,12 @@ function enhancePromptList() {
             }
         };
 
-        // 1. Render newly-created empty groups at the top so user sees them immediately
         for (const group of store.groups) {
             if ((itemsByGroup.get(group.id) || []).length === 0) {
                 appendGroupBlock(group);
             }
         }
 
-        // 2. Walk items in true `prompt_order`: place each group at its first member's exact position,
-        //    and leave ungrouped items inline at their exact `prompt_order` position!
         for (const rec of itemRecords) {
             if (rec.group) {
                 if (!placedGroups.has(rec.group.id)) {
@@ -570,6 +500,10 @@ function renderStarredMirror(starred, forceExpand) {
     `;
 }
 
+/**
+ * Keeps only `[...]` + native `[pencil]` + native `[toggle]` on each prompt row!
+ * Star, Group/Note (`fa-sliders`), and native Detach (`fa-link-slash`) are folded into `[...]`.
+ */
 function decoratePromptItem(li, id, meta, group, locked) {
     const controls = li.querySelector('.prompt_manager_prompt_controls');
     const host = controls || li;
@@ -584,19 +518,26 @@ function decoratePromptItem(li, id, meta, group, locked) {
         }
     }
 
-    const tipParts = [];
-    if (group) tipParts.push(`分组：${group.name}`);
-    if (meta?.note) tipParts.push(`备注：${meta.note}`);
-    const noteTitle = tipParts.length ? tipParts.join(' | ') : '设置所属分组与备注';
-
+    const hasMetaIndicator = Boolean(meta?.starred || meta?.note);
     extras.innerHTML = `
         ${pState.batchMode ? `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" ${pState.selectedIds.has(id) ? 'checked' : ''} />` : ''}
-        <button type="button" class="bb-icon-action ${meta?.starred ? 'is-starred' : ''}" data-bb-item-act="star" data-id="${esc(id)}" title="星标置顶"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
-        <button type="button" class="bb-icon-action ${meta?.note ? 'has-note' : ''}" data-bb-item-act="edit-item" data-id="${esc(id)}" title="${esc(noteTitle)}"><i class="fa-regular fa-note-sticky"></i></button>
+        <button type="button" class="bb-icon-action bb-more-btn ${hasMetaIndicator ? 'has-meta' : ''}" data-bb-item-act="more" data-id="${esc(id)}" title="更多操作"><i class="fa-solid fa-ellipsis"></i></button>
     `;
 
     const nameEl = li.querySelector('.completion_prompt_manager_prompt_name');
     if (nameEl) {
+        let starMark = nameEl.querySelector('.bb-inline-star-mark');
+        if (meta?.starred) {
+            if (!starMark) {
+                starMark = document.createElement('i');
+                starMark.className = 'fa-solid fa-star bb-inline-star-mark';
+                starMark.title = '已星标置顶';
+                nameEl.appendChild(starMark);
+            }
+        } else if (starMark) {
+            starMark.remove();
+        }
+
         let noteTag = nameEl.querySelector('.bb-inline-note-tag');
         const tagText = !locked && group ? `[${group.name}] ${meta?.note || ''}`.trim() : (meta?.note || '');
         if (tagText) {
@@ -704,32 +645,60 @@ function bindListIfNeeded(listEl) {
             return;
         }
 
-        const itemActBtn = e.target.closest('[data-bb-item-act]');
+        const itemActBtn = e.target.closest('[data-bb-item-act="more"]');
         if (itemActBtn) {
             e.stopPropagation();
             const id = itemActBtn.dataset.id;
+            const li = itemActBtn.closest('.completion_prompt_manager_prompt');
             const store = pState.presetData.promptGroups;
             if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
-            if (itemActBtn.dataset.bbItemAct === 'star') {
-                store.items[id].starred = !store.items[id].starred;
-                await savePresetData(pState.presetData);
-                scheduleEnhancePromptList();
-            } else if (itemActBtn.dataset.bbItemAct === 'edit-item') {
-                const li = itemActBtn.closest('.completion_prompt_manager_prompt');
-                const itemName = li ? getCleanPromptName(li, id) : id;
-                const res = await openItemDialog({
-                    itemName,
-                    note: store.items[id].note,
-                    groupId: store.items[id].groupId,
-                    groups: store.groups,
+            const isStarred = Boolean(store.items[id].starred);
+            const detachEl = li?.querySelector('.prompt-manager-detach-action');
+
+            const actions = [
+                {
+                    key: 'star',
+                    icon: isStarred ? 'fa-solid fa-star' : 'fa-regular fa-star',
+                    label: isStarred ? '取消星标置顶' : '设为星标置顶',
+                },
+                {
+                    key: 'edit-item',
+                    icon: 'fa-solid fa-sliders',
+                    label: '分组与备注',
+                },
+            ];
+            if (detachEl) {
+                actions.push({
+                    key: 'detach',
+                    icon: 'fa-solid fa-link-slash',
+                    label: '从列表移除',
+                    danger: true,
                 });
-                if (res !== null) {
-                    store.items[id].note = res.note;
-                    store.items[id].groupId = res.groupId;
+            }
+
+            openPopMenu(itemActBtn, actions, async (key) => {
+                if (key === 'star') {
+                    store.items[id].starred = !store.items[id].starred;
                     await savePresetData(pState.presetData);
                     scheduleEnhancePromptList();
+                } else if (key === 'edit-item') {
+                    const itemName = li ? getCleanPromptName(li, id) : id;
+                    const res = await openItemDialog({
+                        itemName,
+                        note: store.items[id].note,
+                        groupId: store.items[id].groupId,
+                        groups: store.groups,
+                    });
+                    if (res !== null) {
+                        store.items[id].note = res.note;
+                        store.items[id].groupId = res.groupId;
+                        await savePresetData(pState.presetData);
+                        scheduleEnhancePromptList();
+                    }
+                } else if (key === 'detach') {
+                    detachEl?.click();
                 }
-            }
+            });
             return;
         }
 

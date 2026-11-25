@@ -6,6 +6,33 @@
     display: none !important;
 }
 
+/* Fix jQuery UI sortable('disable') adding ui-state-disabled `not-allowed` cursor on background box */
+#completion_prompt_manager #completion_prompt_manager_list,
+#completion_prompt_manager #completion_prompt_manager_list.ui-state-disabled,
+#completion_prompt_manager #completion_prompt_manager_list.ui-sortable-disabled {
+    cursor: default !important;
+    opacity: 1 !important;
+}
+
+/* Fold OpenAI preset miscellaneous sliders & switches behind `| 预设设置 ⌄` */
+.bb-preset-misc-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 2px;
+    margin: 6px 0 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+body.bb-preset-misc-collapsed #range_block_openai > :not(#bb_preset_misc_toggle) {
+    display: none !important;
+}
+
+body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_manager)) {
+    display: none !important;
+}
+
 /* Lock drag handles when prompt order is locked */
 #completion_prompt_manager_list.bb-order-locked .drag-handle {
     display: none !important;
@@ -16,7 +43,12 @@
     cursor: default !important;
 }
 
-/* Expand native prompt item Column 2 from fixed 80px to auto so icons fit cleanly */
+/* Hide native detach button (folded into Bluebower `...` menu) & empty spacer spans */
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .prompt-manager-detach-action,
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .prompt_manager_prompt_controls > span.fa-solid:empty {
+    display: none !important;
+}
+
 #completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt {
     grid-template-columns: minmax(0, 1fr) auto 45px !important;
     column-gap: 6px;
@@ -38,13 +70,23 @@
     display: inline-flex !important;
     align-items: center !important;
     justify-content: flex-end !important;
-    gap: 4px !important;
+    gap: 5px !important;
     width: auto !important;
 }
 
 #regex_container .regex-script-label {
     align-items: center;
     padding: 3px 6px;
+}
+
+.bb-regex-tray-items {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.bb-tray-btn.is-starred {
+    color: var(--SmartThemeQuoteColor, #eab308);
 }
 
 /* Sleek single-line topbar inside #completion_prompt_manager_list & #regex_container */
@@ -114,11 +156,11 @@
     opacity: 1;
 }
 
-/* Minimal borderless header action icons (matches BaiBai / native ST style) */
+/* Minimal borderless header action icons */
 .bb-topbar-icons {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     flex-shrink: 0;
 }
 
@@ -150,9 +192,8 @@
     background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 15%, transparent);
 }
 
-/* Collapsible Search, Settings & Batch drawers */
+/* Collapsible Search+Filter & Batch drawers */
 .bb-search-drawer,
-.bb-settings-drawer,
 .bb-batch-drawer {
     display: none;
     align-items: center;
@@ -164,24 +205,46 @@
 }
 
 .bb-search-drawer.is-open,
-.bb-settings-drawer.is-open,
 .bb-batch-drawer.is-open {
     display: flex;
 }
 
 .bb-search-drawer .bb-search {
-    width: 100% !important;
+    flex: 1 1 140px;
+    min-width: 100px;
     height: 28px !important;
     margin: 0 !important;
     padding: 0 9px !important;
     font-size: 0.92em !important;
 }
 
-.bb-setting-check {
+.bb-filter-pills {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.bb-pill {
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.28));
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 6%, transparent);
+    color: var(--SmartThemeBodyColor, inherit);
+    border-radius: 999px;
+    padding: 0 9px;
+    font-size: 0.84em;
+    white-space: nowrap;
     cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.bb-pill.is-active {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 22%, transparent);
+    border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 60%, transparent);
+    font-weight: 600;
 }
 
 .bb-batch-count {
@@ -202,6 +265,7 @@
     flex-direction: row !important;
     align-items: center !important;
     justify-content: center !important;
+    gap: 5px !important;
     flex: 0 0 auto !important;
     width: auto !important;
     min-width: max-content !important;
@@ -296,7 +360,7 @@
     flex-shrink: 0;
 }
 
-/* Clean calm group cards (matching BaiBai & native ST visual language) */
+/* Clean calm group cards */
 #completion_prompt_manager #completion_prompt_manager_list > li.bb-group-header,
 .bb-group-header {
     list-style: none !important;
@@ -368,7 +432,6 @@
     flex-shrink: 0;
 }
 
-/* Native-matching FontAwesome toggle & borderless row icons */
 .bb-group-toggle-icon {
     font-size: 1.15em;
     cursor: pointer;
@@ -424,11 +487,12 @@
 }
 
 /* Per-item inline decorations */
-.bb-item-extras {
+.bb-item-extras,
+.bb-regex-batch-wrap {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    margin-right: 3px;
+    gap: 4px;
+    margin-right: 2px;
     flex-shrink: 0;
 }
 
@@ -457,14 +521,16 @@
     opacity: 1;
 }
 
-.bb-icon-action.is-starred {
-    opacity: 1;
-    color: var(--SmartThemeQuoteColor, #eab308);
+.bb-icon-action.has-meta {
+    opacity: 0.88;
+    color: var(--SmartThemeQuoteColor, inherit);
 }
 
-.bb-icon-action.has-note {
-    opacity: 0.95;
-    color: var(--SmartThemeQuoteColor, #3b82f6);
+.bb-inline-star-mark {
+    margin-left: 5px;
+    font-size: 0.75em;
+    color: var(--SmartThemeQuoteColor, #eab308);
+    opacity: 0.9;
 }
 
 .bb-inline-note-tag {
@@ -474,6 +540,77 @@
     color: var(--SmartThemeEmColor, inherit);
     opacity: 0.8;
     font-weight: normal;
+}
+
+/* Floating ellipsis popover menu */
+.bb-pop-menu {
+    position: fixed;
+    z-index: 10010;
+    min-width: 136px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor, #1c1e24);
+    color: var(--SmartThemeBodyColor, #e5e7eb);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.32));
+    box-shadow: 0 8px 24px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.4));
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.bb-pop-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.bb-pop-item i {
+    width: 14px;
+    text-align: center;
+    opacity: 0.85;
+}
+
+.bb-pop-item:hover {
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 12%, transparent);
+}
+
+.bb-pop-item.is-danger {
+    color: #ef4444;
+}
+
+.bb-pop-item.is-danger:hover {
+    background: rgba(239, 68, 68, 0.14);
+}
+
+/* Extension settings drawer */
+.bb-ext-settings-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 4px;
+}
+
+.bb-ext-settings-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+
+.bb-ext-status {
+    font-size: 0.84em;
+    color: var(--SmartThemeQuoteColor, #3b82f6);
 }
 
 /* Subtle badges */

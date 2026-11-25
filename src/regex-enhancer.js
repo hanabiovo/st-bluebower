@@ -107,15 +107,18 @@ function ensureRegexToolbar(regexContainer) {
                     <span class="bb-inline-notice"></span>
                 </div>
                 <div class="bb-topbar-icons">
-                    <button type="button" class="bb-head-icon bb-search-toggle" title="搜索正则脚本、分组或备注"><i class="fa-solid fa-magnifying-glass"></i></button>
-                    <button type="button" class="bb-head-icon bb-filter-enabled" title="仅显示已启用正则"><i class="fa-solid fa-bolt"></i></button>
-                    <button type="button" class="bb-head-icon bb-filter-starred" title="仅显示星标正则"><i class="fa-solid fa-star"></i></button>
+                    <button type="button" class="bb-head-icon bb-search-toggle" title="搜索与筛选"><i class="fa-solid fa-magnifying-glass"></i></button>
                     <button type="button" class="bb-head-icon bb-new-group-btn" title="新建正则分组"><i class="fa-solid fa-folder-plus"></i></button>
-                    <button type="button" class="bb-head-icon bb-batch-btn" title="批量移动正则到分组"><i class="fa-solid fa-list-check"></i></button>
+                    <button type="button" class="bb-head-icon bb-batch-btn" title="批量移动正则"><i class="fa-solid fa-list-check"></i></button>
                 </div>
             </div>
             <div class="bb-search-drawer">
                 <input type="search" class="bb-search text_pole" placeholder="搜索正则脚本、分组或备注..." />
+                <div class="bb-filter-pills">
+                    <button type="button" class="bb-pill is-active" data-filter="all">全部</button>
+                    <button type="button" class="bb-pill" data-filter="enabled">已启用</button>
+                    <button type="button" class="bb-pill" data-filter="starred" title="仅看星标"><i class="fa-solid fa-star"></i></button>
+                </div>
             </div>
             <div class="bb-batch-drawer" id="bb_regex_batch"></div>
         `;
@@ -135,8 +138,9 @@ function bindRegexToolbarEvents(toolbar) {
 
     toolbar.querySelector('.bb-search-toggle').addEventListener('click', () => {
         rState.searchOpen = !rState.searchOpen;
-        if (!rState.searchOpen && rState.query) {
+        if (!rState.searchOpen && (rState.query || rState.filter !== 'all')) {
             rState.query = '';
+            rState.filter = 'all';
             searchInput.value = '';
         }
         scheduleEnhanceRegexLists();
@@ -151,14 +155,11 @@ function bindRegexToolbarEvents(toolbar) {
         }, 100);
     });
 
-    toolbar.querySelector('.bb-filter-enabled').addEventListener('click', () => {
-        rState.filter = rState.filter === 'enabled' ? 'all' : 'enabled';
-        scheduleEnhanceRegexLists();
-    });
-
-    toolbar.querySelector('.bb-filter-starred').addEventListener('click', () => {
-        rState.filter = rState.filter === 'starred' ? 'all' : 'starred';
-        scheduleEnhanceRegexLists();
+    toolbar.querySelectorAll('.bb-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+            rState.filter = pill.dataset.filter;
+            scheduleEnhanceRegexLists();
+        });
     });
 
     toolbar.querySelector('.bb-new-group-btn').addEventListener('click', async () => {
@@ -240,10 +241,12 @@ function bindRegexToolbarEvents(toolbar) {
 function syncRegexTopbar() {
     const topbar = rState.toolbarEl;
     if (!topbar) return;
-    topbar.querySelector('.bb-search-toggle').classList.toggle('is-active', rState.searchOpen || Boolean(rState.query));
-    topbar.querySelector('.bb-search-drawer').classList.toggle('is-open', rState.searchOpen || Boolean(rState.query));
-    topbar.querySelector('.bb-filter-enabled').classList.toggle('is-active', rState.filter === 'enabled');
-    topbar.querySelector('.bb-filter-starred').classList.toggle('is-active', rState.filter === 'starred');
+    const hasSearchOrFilter = rState.searchOpen || Boolean(rState.query) || rState.filter !== 'all';
+    topbar.querySelector('.bb-search-toggle').classList.toggle('is-active', hasSearchOrFilter);
+    topbar.querySelector('.bb-search-drawer').classList.toggle('is-open', hasSearchOrFilter);
+    topbar.querySelectorAll('.bb-pill').forEach(p => {
+        p.classList.toggle('is-active', p.dataset.filter === rState.filter);
+    });
     topbar.querySelector('.bb-batch-btn').classList.toggle('is-active', rState.batchMode);
     renderBatchDrawer();
 }
@@ -433,12 +436,29 @@ function enhanceSingleRegexContainer(listEl, cfg) {
     listEl.appendChild(frag);
 }
 
+/**
+ * Folds Star, Group/Note (`fa-sliders`), and native Delete (`delete_regex`) inside
+ * SillyTavern's native `.regex_script_buttons` (`...` ellipsis tray), leaving only
+ * `[toggle] [...] [pencil]` visible on each regex row!
+ */
 function decorateRegexRow(row, id, meta, group, cfg) {
     const raw = findRawScript(id, cfg.origin);
     const scopeInfo = raw ? getRegexScopeInfo(raw) : null;
 
     const nameEl = row.querySelector('.regex_script_name');
     if (nameEl) {
+        let starMark = nameEl.querySelector('.bb-inline-star-mark');
+        if (meta?.starred) {
+            if (!starMark) {
+                starMark = document.createElement('i');
+                starMark.className = 'fa-solid fa-star bb-inline-star-mark';
+                starMark.title = '已星标';
+                nameEl.appendChild(starMark);
+            }
+        } else if (starMark) {
+            starMark.remove();
+        }
+
         let badge = nameEl.querySelector('.bb-regex-scope-badge');
         if (scopeInfo) {
             if (!badge) {
@@ -464,28 +484,48 @@ function decorateRegexRow(row, id, meta, group, cfg) {
         }
     }
 
-    let extras = row.querySelector(':scope > .bb-item-extras');
-    if (!extras) {
-        extras = document.createElement('div');
-        extras.className = 'bb-item-extras';
-        const btnGroup = row.querySelector(':scope > .flex-container');
-        if (btnGroup) {
-            row.insertBefore(extras, btnGroup);
-        } else {
-            row.appendChild(extras);
+    // Batch checkbox (only when batchMode is active)
+    let batchWrap = row.querySelector(':scope > .bb-regex-batch-wrap');
+    if (rState.batchMode) {
+        if (!batchWrap) {
+            batchWrap = document.createElement('div');
+            batchWrap.className = 'bb-regex-batch-wrap';
+            row.prepend(batchWrap);
         }
+        batchWrap.innerHTML = `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" data-origin="${cfg.origin}" data-scope="${cfg.storeScope}" ${rState.selectedItems.has(id) ? 'checked' : ''} />`;
+    } else if (batchWrap) {
+        batchWrap.remove();
     }
 
-    const tipParts = [];
-    if (group) tipParts.push(`分组：${group.name}`);
-    if (meta?.note) tipParts.push(`备注：${meta.note}`);
-    const noteTitle = tipParts.length ? tipParts.join(' | ') : '设置所属分组与备注';
+    // Fold Star, Group/Note, and Delete into native `.regex_script_buttons` ellipsis tray
+    const tray = row.querySelector('.regex_script_buttons');
+    if (tray) {
+        let bbTray = tray.querySelector('.bb-regex-tray-items');
+        if (!bbTray) {
+            bbTray = document.createElement('div');
+            bbTray.className = 'bb-regex-tray-items';
+            tray.prepend(bbTray);
+        }
 
-    extras.innerHTML = `
-        ${rState.batchMode ? `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" data-origin="${cfg.origin}" data-scope="${cfg.storeScope}" ${rState.selectedItems.has(id) ? 'checked' : ''} />` : ''}
-        <button type="button" class="bb-icon-action ${meta?.starred ? 'is-starred' : ''}" data-bb-regex-act="star" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="星标"><i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i></button>
-        <button type="button" class="bb-icon-action ${meta?.note ? 'has-note' : ''}" data-bb-regex-act="edit-item" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="${esc(noteTitle)}"><i class="fa-regular fa-note-sticky"></i></button>
-    `;
+        const tipParts = [];
+        if (group) tipParts.push(`分组：${group.name}`);
+        if (meta?.note) tipParts.push(`备注：${meta.note}`);
+        const noteTitle = tipParts.length ? tipParts.join(' | ') : '分组与备注';
+
+        bbTray.innerHTML = `
+            <div class="menu_button bb-tray-btn ${meta?.starred ? 'is-starred' : ''}" data-bb-regex-act="star" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="${meta?.starred ? '取消星标' : '设为星标'}">
+                <i class="${meta?.starred ? 'fa-solid' : 'fa-regular'} fa-star"></i>
+            </div>
+            <div class="menu_button bb-tray-btn" data-bb-regex-act="edit-item" data-id="${esc(id)}" data-scope="${cfg.storeScope}" title="${esc(noteTitle)}">
+                <i class="fa-solid fa-sliders"></i>
+            </div>
+        `;
+
+        const delBtn = row.querySelector(':scope > .flex-container > .delete_regex');
+        if (delBtn) {
+            tray.appendChild(delBtn);
+        }
+    }
 }
 
 function ensureListObservers() {

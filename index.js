@@ -1,10 +1,13 @@
 import { initPromptEnhancer, onPromptPresetChanged } from './src/prompt-enhancer.js';
 import { initRegexEnhancer, onRegexPresetChanged } from './src/regex-enhancer.js';
+import { initExtensionSettingsPanel, syncPresetMiscFolding } from './src/settings-panel.js';
 
 (() => {
     'use strict';
 
-    function tryInitEnhancers() {
+    function tryInitAll() {
+        syncPresetMiscFolding();
+        initExtensionSettingsPanel();
         initPromptEnhancer();
         initRegexEnhancer();
     }
@@ -15,6 +18,7 @@ import { initRegexEnhancer, onRegexPresetChanged } from './src/regex-enhancer.js
 
         const { eventSource, eventTypes } = ctx;
         const onChange = () => {
+            syncPresetMiscFolding();
             onPromptPresetChanged();
             onRegexPresetChanged();
         };
@@ -31,12 +35,12 @@ import { initRegexEnhancer, onRegexPresetChanged } from './src/regex-enhancer.js
     }
 
     function init() {
-        tryInitEnhancers();
+        tryInitAll();
         bindEvents();
 
-        // Regex extension templates can mount slightly after initial load
-        setTimeout(tryInitEnhancers, 1200);
-        setTimeout(tryInitEnhancers, 3000);
+        // Retry after async extension panels mount
+        setTimeout(tryInitAll, 1200);
+        setTimeout(tryInitAll, 3000);
     }
 
     if (document.readyState === 'loading') {
