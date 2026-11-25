@@ -1,6 +1,7 @@
 import { initPromptEnhancer, onPromptPresetChanged } from './src/prompt-enhancer.js';
 import { initRegexEnhancer, onRegexPresetChanged } from './src/regex-enhancer.js';
 import { initExtensionSettingsPanel, syncPresetMiscFolding } from './src/settings-panel.js';
+import { invalidatePresetCache } from './src/storage.js';
 
 (() => {
     'use strict';
@@ -18,6 +19,7 @@ import { initExtensionSettingsPanel, syncPresetMiscFolding } from './src/setting
 
         const { eventSource, eventTypes } = ctx;
         const onChange = () => {
+            invalidatePresetCache();
             syncPresetMiscFolding();
             onPromptPresetChanged();
             onRegexPresetChanged();

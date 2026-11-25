@@ -5,7 +5,7 @@ import {
     makeId,
     normalizeGroupStore,
     saveGlobalSettings,
-    savePresetData,
+    savePresetDataDebounced,
 } from './storage.js';
 import { batchSetRegexEnabled, getRegexScopeInfo } from './st-bridge.js';
 
@@ -61,9 +61,9 @@ function getStore(storeScope) {
     return getGlobalSettings().globalRegexGroups;
 }
 
-async function persistStore(storeScope) {
+function persistStore(storeScope) {
     if (storeScope === 'preset') {
-        if (rState.presetData) await savePresetData(rState.presetData);
+        if (rState.presetData) savePresetDataDebounced(rState.presetData);
     } else {
         saveGlobalSettings();
     }
@@ -123,6 +123,7 @@ function ensureRegexToolbar(regexContainer) {
             </div>
             <div class="bb-batch-drawer" id="bb_regex_batch"></div>
         `;
+        toolbar.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
         bindRegexToolbarEvents(toolbar);
         rState.toolbarEl = toolbar;
     }
@@ -321,6 +322,7 @@ function enhanceAllRegexLists() {
 }
 
 function enhanceSingleRegexContainer(listEl, cfg) {
+    listEl.classList.remove('ui-state-disabled', 'ui-sortable-disabled');
     const nativeItems = Array.from(listEl.children).filter(el => el.classList.contains('regex-script-label'));
     listEl.querySelectorAll('.bb-group-header, .bb-group-note-li').forEach(el => el.remove());
 
@@ -362,6 +364,8 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         row.classList.toggle('bb-filter-hidden', !matchFilter);
         row.classList.toggle('bb-batch-selected', rState.batchMode && rState.selectedItems.has(id));
         row.classList.remove('bb-collapsed-hidden', 'bb-grouped-child');
+        delete row.dataset.bbMemberOf;
+        delete row.dataset.bbDefaultMember;
 
         decorateRegexRow(row, id, meta, group, cfg);
 
@@ -396,6 +400,7 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         gHeader.dataset.bbGroupId = group.id;
         gHeader.dataset.bbStoreScope = cfg.storeScope;
         gHeader.dataset.bbOrigin = cfg.origin;
+        gHeader.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
         gHeader.innerHTML = `
             <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
             <span class="bb-group-name">${esc(group.name)}</span>
@@ -409,15 +414,17 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         `;
         frag.appendChild(gHeader);
 
-        if (group.note && !isCollapsed) {
+        if (group.note) {
             const noteEl = document.createElement('div');
-            noteEl.className = 'bb-group-note-li';
+            noteEl.className = `bb-group-note-li ${isCollapsed ? 'bb-collapsed-hidden' : ''}`;
+            noteEl.dataset.bbNoteOf = group.id;
             noteEl.textContent = group.note;
             frag.appendChild(noteEl);
         }
 
         for (const entry of entries) {
             entry.row.classList.add('bb-grouped-child');
+            entry.row.dataset.bbMemberOf = group.id;
             if (isCollapsed) entry.row.classList.add('bb-collapsed-hidden');
             frag.appendChild(entry.row);
         }
@@ -439,6 +446,7 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         dHeader.dataset.bbDefaultGroup = '1';
         dHeader.dataset.bbStoreScope = cfg.storeScope;
         dHeader.dataset.bbOrigin = cfg.origin;
+        dHeader.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
         dHeader.innerHTML = `
             <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
             <span class="bb-group-name">默认</span>
@@ -451,6 +459,7 @@ function enhanceSingleRegexContainer(listEl, cfg) {
 
         for (const entry of ungroupedEntries) {
             entry.row.classList.add('bb-grouped-child');
+            entry.row.dataset.bbDefaultMember = '1';
             if (isCollapsed) entry.row.classList.add('bb-collapsed-hidden');
             frag.appendChild(entry.row);
         }
@@ -673,9 +682,21 @@ function bindRegexContainerIfNeeded(regexContainer) {
                     return;
                 }
 
+                const forceExpand = Boolean(rState.query) || rState.filter !== 'all';
                 store.defaultCollapsed = !(store.defaultCollapsed !== false);
-                scheduleEnhanceRegexLists();
-                await persistStore(storeScope);
+                if (!forceExpand) {
+                    const isCollapsed = store.defaultCollapsed;
+                    const icon = gHeader.querySelector('.bb-chevron i');
+                    if (icon) {
+                        icon.classList.toggle('fa-chevron-right', isCollapsed);
+                        icon.classList.toggle('fa-chevron-down', !isCollapsed);
+                    }
+                    const listEl = gHeader.parentElement;
+                    listEl?.querySelectorAll('[data-bb-default-member="1"]').forEach(el => {
+                        el.classList.toggle('bb-collapsed-hidden', isCollapsed);
+                    });
+                }
+                persistStore(storeScope);
                 return;
             }
 
@@ -734,9 +755,21 @@ function bindRegexContainerIfNeeded(regexContainer) {
                 return;
             }
 
+            const forceExpand = Boolean(rState.query) || rState.filter !== 'all';
             group.collapsed = !group.collapsed;
-            scheduleEnhanceRegexLists();
-            await persistStore(storeScope);
+            if (!forceExpand) {
+                const isCollapsed = group.collapsed;
+                const icon = gHeader.querySelector('.bb-chevron i');
+                if (icon) {
+                    icon.classList.toggle('fa-chevron-right', isCollapsed);
+                    icon.classList.toggle('fa-chevron-down', !isCollapsed);
+                }
+                const listEl = gHeader.parentElement;
+                listEl?.querySelectorAll(`[data-bb-member-of="${CSS.escape(gid)}"], [data-bb-note-of="${CSS.escape(gid)}"]`).forEach(el => {
+                    el.classList.toggle('bb-collapsed-hidden', isCollapsed);
+                });
+            }
+            persistStore(storeScope);
             return;
         }
 

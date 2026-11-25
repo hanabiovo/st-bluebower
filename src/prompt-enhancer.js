@@ -6,6 +6,7 @@ import {
     normalizeGroupStore,
     saveGlobalSettings,
     savePresetData,
+    savePresetDataDebounced,
 } from './storage.js';
 import { batchSetPromptsEnabled } from './st-bridge.js';
 
@@ -94,6 +95,7 @@ function ensureTopbarLi() {
         <div class="bb-starred-mirror" id="bb_prompt_starred"></div>
     `;
 
+    li.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
     bindTopbarEvents(li);
     pState.topbarLi = li;
     return li;
@@ -143,7 +145,7 @@ function bindTopbarEvents(topbar) {
             note: res.note,
         });
         normalizeGroupStore(store);
-        await savePresetData(pState.presetData);
+        savePresetDataDebounced(pState.presetData);
         scheduleEnhancePromptList();
     });
 
@@ -156,13 +158,13 @@ function bindTopbarEvents(topbar) {
         scheduleEnhancePromptList();
     });
 
-    topbar.querySelector('.bb-lock-btn').addEventListener('click', async () => {
+    topbar.querySelector('.bb-lock-btn').addEventListener('click', () => {
         const locked = !pState.presetData.settings.lockPromptOrder;
         pState.presetData.settings.lockPromptOrder = locked;
         const gs = getGlobalSettings();
         gs.lockPromptOrder = locked;
         saveGlobalSettings();
-        await savePresetData(pState.presetData);
+        savePresetDataDebounced(pState.presetData);
         scheduleEnhancePromptList();
         showNotice(locked ? '已开启分组折叠' : '已切换为原序拖拽模式');
     });
@@ -188,7 +190,7 @@ function bindTopbarEvents(topbar) {
             }
             pState.selectedIds.clear();
             pState.batchMode = false;
-            await savePresetData(pState.presetData);
+            savePresetDataDebounced(pState.presetData);
             scheduleEnhancePromptList();
             showNotice('批量移动完成');
         }
@@ -205,7 +207,7 @@ function bindTopbarEvents(topbar) {
             const id = starBtn.dataset.id;
             const store = pState.presetData.promptGroups;
             if (store.items[id]) store.items[id].starred = false;
-            savePresetData(pState.presetData);
+            savePresetDataDebounced(pState.presetData);
             scheduleEnhancePromptList();
             return;
         }
@@ -249,11 +251,15 @@ function syncTopbarControls(enabledTotal, totalCount) {
 
 function applyLockOrderState(listEl, locked) {
     listEl.classList.toggle('bb-order-locked', locked);
+    // CRITICAL: Never use sortable('disable') because jQuery UI adds `.ui-state-disabled`
+    // which sets `pointer-events: none` on the entire list in jquery-ui.min.css, breaking mobile taps!
+    listEl.classList.remove('ui-state-disabled', 'ui-sortable-disabled');
     const $ = window.jQuery;
     if ($ && typeof $(listEl).sortable === 'function') {
         try {
             if ($(listEl).data('ui-sortable')) {
-                $(listEl).sortable(locked ? 'disable' : 'enable');
+                $(listEl).sortable('option', 'disabled', false);
+                $(listEl).sortable('option', 'items', locked ? '.bb-no-drag-items' : '.completion_prompt_manager_prompt_draggable');
             }
         } catch {
             // Ignore if sortable is not initialized yet
@@ -373,6 +379,7 @@ function enhancePromptList() {
             li.classList.toggle('bb-filter-hidden', !matchFilter);
             li.classList.toggle('bb-batch-selected', pState.batchMode && pState.selectedIds.has(id));
             li.classList.remove('bb-collapsed-hidden', 'bb-grouped-child');
+            delete li.dataset.bbMemberOf;
 
             decoratePromptItem(li, id, meta, group, locked);
 
@@ -422,6 +429,7 @@ function enhancePromptList() {
             const gHeader = document.createElement('li');
             gHeader.className = `bb-group-header ${enabledCount > 0 ? '' : 'is-group-disabled'}`;
             gHeader.dataset.bbGroupId = group.id;
+            gHeader.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
             gHeader.innerHTML = `
                 <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
                 <span class="bb-group-name">${esc(group.name)}</span>
@@ -436,15 +444,17 @@ function enhancePromptList() {
             `;
             frag.appendChild(gHeader);
 
-            if (group.note && !isCollapsed) {
+            if (group.note) {
                 const noteLi = document.createElement('li');
-                noteLi.className = 'bb-group-note-li';
+                noteLi.className = `bb-group-note-li ${isCollapsed ? 'bb-collapsed-hidden' : ''}`;
+                noteLi.dataset.bbNoteOf = group.id;
                 noteLi.textContent = group.note;
                 frag.appendChild(noteLi);
             }
 
             for (const entry of entries) {
                 entry.li.classList.add('bb-grouped-child');
+                entry.li.dataset.bbMemberOf = group.id;
                 if (isCollapsed) entry.li.classList.add('bb-collapsed-hidden');
                 frag.appendChild(entry.li);
             }
@@ -658,7 +668,7 @@ function bindListIfNeeded(listEl) {
                         }));
                     }
                     batchSetPromptsEnabled(updates);
-                    await savePresetData(pState.presetData);
+                    savePresetDataDebounced(pState.presetData);
                     scheduleEnhancePromptList();
                 } else if (act === 'edit') {
                     const res = await openGroupDialog({ mode: 'edit', group });
@@ -666,7 +676,7 @@ function bindListIfNeeded(listEl) {
                         group.name = res.name;
                         group.note = res.note;
                         group.exclusive = res.exclusive;
-                        await savePresetData(pState.presetData);
+                        savePresetDataDebounced(pState.presetData);
                         scheduleEnhancePromptList();
                     }
                 } else if (act === 'del') {
@@ -675,16 +685,28 @@ function bindListIfNeeded(listEl) {
                     for (const meta of Object.values(store.items)) {
                         if (meta.groupId === gid) meta.groupId = null;
                     }
-                    await savePresetData(pState.presetData);
+                    savePresetDataDebounced(pState.presetData);
                     scheduleEnhancePromptList();
                     showNotice('已删除分组');
                 }
                 return;
             }
 
+            // Instant 0ms DOM collapse/expand without rebuilding the whole list
+            const forceExpand = Boolean(pState.query) || pState.filter !== 'all';
             group.collapsed = !group.collapsed;
-            scheduleEnhancePromptList();
-            await savePresetData(pState.presetData);
+            if (!forceExpand) {
+                const isCollapsed = group.collapsed;
+                const icon = groupHeader.querySelector('.bb-chevron i');
+                if (icon) {
+                    icon.classList.toggle('fa-chevron-right', isCollapsed);
+                    icon.classList.toggle('fa-chevron-down', !isCollapsed);
+                }
+                listEl.querySelectorAll(`[data-bb-member-of="${CSS.escape(gid)}"], [data-bb-note-of="${CSS.escape(gid)}"]`).forEach(el => {
+                    el.classList.toggle('bb-collapsed-hidden', isCollapsed);
+                });
+            }
+            savePresetDataDebounced(pState.presetData);
             return;
         }
 
@@ -722,7 +744,7 @@ function bindListIfNeeded(listEl) {
             openPopMenu(itemActBtn, actions, async (key) => {
                 if (key === 'star') {
                     store.items[id].starred = !store.items[id].starred;
-                    await savePresetData(pState.presetData);
+                    savePresetDataDebounced(pState.presetData);
                     scheduleEnhancePromptList();
                 } else if (key === 'edit-item') {
                     const itemName = li ? getCleanPromptName(li, id) : id;
@@ -735,7 +757,7 @@ function bindListIfNeeded(listEl) {
                     if (res !== null) {
                         store.items[id].note = res.note;
                         store.items[id].groupId = res.groupId;
-                        await savePresetData(pState.presetData);
+                        savePresetDataDebounced(pState.presetData);
                         scheduleEnhancePromptList();
                     }
                 } else if (key === 'detach') {

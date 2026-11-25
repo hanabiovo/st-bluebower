@@ -37,13 +37,18 @@ export function openPopMenu(anchorEl, actions, onSelect) {
     closePopMenu();
 
     const menu = document.createElement('div');
-    menu.className = 'bb-pop-menu';
+    menu.className = 'bb-pop-menu ui-widget';
     menu.innerHTML = actions.map(a => `
         <button type="button" class="bb-pop-item ${a.danger ? 'is-danger' : ''}" data-key="${esc(a.key)}">
             <i class="${esc(a.icon)}"></i>
             <span>${esc(a.label)}</span>
         </button>
     `).join('');
+
+    // Prevent clicks/taps inside floating menu from bubbling to ST's drawer auto-closer (`$('html').on('touchstart mousedown')`)
+    for (const evt of ['touchstart', 'mousedown', 'mouseup', 'touchend']) {
+        menu.addEventListener(evt, e => e.stopPropagation());
+    }
 
     document.body.appendChild(menu);
 
@@ -75,10 +80,11 @@ export function openPopMenu(anchorEl, actions, onSelect) {
         document.removeEventListener('pointerdown', onDocClick, true);
         document.removeEventListener('keydown', onScrollOrKey);
         window.removeEventListener('scroll', onScrollOrKey, true);
-        menu.remove();
+        setTimeout(() => menu.remove(), 40);
     };
 
     menu.addEventListener('click', (e) => {
+        e.stopPropagation();
         const btn = e.target.closest('.bb-pop-item');
         if (!btn) return;
         const key = btn.dataset.key;
@@ -181,14 +187,19 @@ function openFormDialog(html, extractor) {
         }
 
         const backdrop = document.createElement('div');
-        backdrop.className = 'bb-dialog-backdrop';
+        backdrop.className = 'bb-dialog-backdrop ui-widget';
         backdrop.innerHTML = html;
         dialogBackdrop = backdrop;
 
+        // Prevent clicks/taps inside dialog from triggering SillyTavern's unpinned drawer auto-close (`$('html').on('touchstart mousedown')`)
+        for (const evt of ['touchstart', 'mousedown', 'mouseup', 'touchend']) {
+            backdrop.addEventListener(evt, e => e.stopPropagation());
+        }
+
         const close = (result) => {
             document.removeEventListener('keydown', onKey);
-            backdrop.remove();
             if (dialogBackdrop === backdrop) dialogBackdrop = null;
+            setTimeout(() => backdrop.remove(), 40);
             resolve(result);
         };
 
@@ -197,6 +208,7 @@ function openFormDialog(html, extractor) {
         };
 
         backdrop.addEventListener('click', (e) => {
+            e.stopPropagation();
             if (e.target === backdrop || e.target.closest('.bb-dialog-cancel')) {
                 close(null);
             }

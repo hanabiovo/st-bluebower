@@ -57,6 +57,8 @@ function updateMiscFoldDOM(toggleBar) {
     if (icon) {
         icon.classList.toggle('down', !miscExpanded);
         icon.classList.toggle('up', miscExpanded);
+        icon.classList.toggle('fa-circle-chevron-down', !miscExpanded);
+        icon.classList.toggle('fa-circle-chevron-up', miscExpanded);
     }
 }
 
@@ -70,7 +72,7 @@ function openQuickSettingsModal() {
     const gs = getGlobalSettings();
     const backdrop = document.createElement('div');
     backdrop.id = 'bb_quick_settings_modal';
-    backdrop.className = 'bb-dialog-backdrop';
+    backdrop.className = 'bb-dialog-backdrop ui-widget';
     backdrop.innerHTML = `
         <div class="bb-dialog-card">
             <div class="bb-dialog-title"><i class="fa-solid fa-dove bb-bird-icon" style="margin-right:6px;"></i>园丁鸟设置 (Bluebower)</div>
@@ -131,8 +133,12 @@ function openQuickSettingsModal() {
         }
     });
 
-    const close = () => backdrop.remove();
+    const close = () => setTimeout(() => backdrop.remove(), 40);
+    for (const evt of ['touchstart', 'mousedown', 'mouseup', 'touchend']) {
+        backdrop.addEventListener(evt, e => e.stopPropagation());
+    }
     backdrop.addEventListener('click', (e) => {
+        e.stopPropagation();
         if (e.target === backdrop || e.target.closest('.bb-qs-close')) close();
     });
     document.body.appendChild(backdrop);
@@ -172,21 +178,23 @@ export function initExtensionSettingsPanel() {
                 <b><i class="fa-solid fa-dove bb-bird-icon" style="margin-right:6px;"></i>园丁鸟分组 (Bluebower)</b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
-            <div class="inline-drawer-content bb-ext-settings-content">
-                <label class="checkbox_label">
-                    <input type="checkbox" id="bb_cfg_collapse_misc" ${gs.collapsePresetMisc ? 'checked' : ''} />
-                    <span>折叠预设页参数杂项（收纳温度、上下文、偏置等设置）</span>
-                </label>
-                <label class="checkbox_label">
-                    <input type="checkbox" id="bb_cfg_sync_baibai" ${gs.syncBaibai ? 'checked' : ''} />
-                    <span>双向同步柏宝箱（ST-BaiBai-Tools）预设分组格式</span>
-                </label>
-                <div class="bb-ext-settings-actions">
-                    <button type="button" id="bb_cfg_reimport_baibai" class="menu_button bb-btn-sm bb-drawer-btn">
-                        <i class="fa-solid fa-file-import"></i>
-                        <span>从柏宝箱重新导入当前预设分组</span>
-                    </button>
-                    <span id="bb_cfg_status" class="bb-ext-status"></span>
+            <div class="inline-drawer-content" style="display: none;">
+                <div class="bb-ext-settings-inner">
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="bb_cfg_collapse_misc" ${gs.collapsePresetMisc ? 'checked' : ''} />
+                        <span>折叠预设页参数杂项（收纳温度、上下文、偏置等设置）</span>
+                    </label>
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="bb_cfg_sync_baibai" ${gs.syncBaibai ? 'checked' : ''} />
+                        <span>双向同步柏宝箱（ST-BaiBai-Tools）预设分组格式</span>
+                    </label>
+                    <div class="bb-ext-settings-actions">
+                        <button type="button" id="bb_cfg_reimport_baibai" class="menu_button bb-btn-sm bb-drawer-btn">
+                            <i class="fa-solid fa-file-import"></i>
+                            <span>从柏宝箱重新导入当前预设分组</span>
+                        </button>
+                        <span id="bb_cfg_status" class="bb-ext-status"></span>
+                    </div>
                 </div>
             </div>
         </div>

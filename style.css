@@ -6,12 +6,35 @@
     display: none !important;
 }
 
-/* Fix jQuery UI sortable('disable') adding ui-state-disabled `not-allowed` cursor on background box */
+/* Prevent jQuery UI sortable('disable') `.ui-state-disabled` from setting `pointer-events: none` or `not-allowed` cursor */
 #completion_prompt_manager #completion_prompt_manager_list,
 #completion_prompt_manager #completion_prompt_manager_list.ui-state-disabled,
-#completion_prompt_manager #completion_prompt_manager_list.ui-sortable-disabled {
+#completion_prompt_manager #completion_prompt_manager_list.ui-sortable-disabled,
+#saved_regex_scripts,
+#saved_regex_scripts.ui-state-disabled,
+#saved_preset_scripts,
+#saved_preset_scripts.ui-state-disabled,
+#saved_scoped_scripts,
+#saved_scoped_scripts.ui-state-disabled {
+    pointer-events: auto !important;
     cursor: default !important;
     opacity: 1 !important;
+}
+
+/* Eliminate 300ms mobile double-tap delay across all Bluebower interactive controls */
+.bb-list-topbar,
+.bb-group-header,
+.bb-head-icon,
+.bb-row-icon,
+.bb-icon-action,
+.bb-pill,
+.bb-pop-item,
+.bb-preset-misc-header,
+.bb-drawer-btn,
+.bb-starred-header,
+#completion_prompt_manager_list li.completion_prompt_manager_prompt,
+#regex_container .regex-script-label {
+    touch-action: manipulation;
 }
 
 /* Fold OpenAI preset miscellaneous sliders & switches behind `| 预设设置 ⌄` */
@@ -654,8 +677,8 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     background: rgba(239, 68, 68, 0.14);
 }
 
-/* Extension settings drawer */
-.bb-ext-settings-content {
+/* Extension settings drawer (inner wrapper so .inline-drawer-content stays display:none by default) */
+.bb-ext-settings-inner {
     display: flex;
     flex-direction: column;
     gap: 8px;

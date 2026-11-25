@@ -190,17 +190,39 @@ export function convertToBaibai(promptGroups) {
     };
 }
 
+let cachedPresetName = undefined;
+let cachedPresetData = null;
+
+/**
+ * Clears the in-memory preset cache so the next `loadPresetData()` reads fresh data.
+ */
+export function invalidatePresetCache() {
+    cachedPresetName = undefined;
+    cachedPresetData = null;
+}
+
 /**
  * Reads the current preset's Bluebower data, auto-migrating from `baibaiToolkit` if needed.
+ * Shares a single live object per active preset so Prompt & Regex enhancers never overwrite each other.
+ * @param {{ force?: boolean }} [opts]
  * @returns {{ data: Object, migratedFromBaibai: boolean, hasBaibaiData: boolean, presetName: string | null }}
  */
-export function loadPresetData() {
+export function loadPresetData(opts = {}) {
     const ctx = window.SillyTavern?.getContext?.();
     const pm = ctx?.getPresetManager?.();
     const presetName = pm?.getSelectedPresetName?.() ?? null;
+    const rawBaibai = pm?.readPresetExtensionField?.({ path: `${BAIBAI_KEY}.presetPromptGroups` }) ?? null;
+
+    if (!opts.force && cachedPresetData && cachedPresetName === presetName) {
+        return {
+            data: cachedPresetData,
+            migratedFromBaibai: false,
+            hasBaibaiData: Boolean(rawBaibai),
+            presetName,
+        };
+    }
 
     let rawBluebower = pm?.readPresetExtensionField?.({ path: EXT_KEY }) ?? null;
-    const rawBaibai = pm?.readPresetExtensionField?.({ path: `${BAIBAI_KEY}.presetPromptGroups` }) ?? null;
 
     if (!rawBluebower && ctx?.chatCompletionSettings?.extensions) {
         rawBluebower = ctx.chatCompletionSettings.extensions[EXT_KEY] ?? null;
@@ -224,6 +246,9 @@ export function loadPresetData() {
             migratedFromBaibai = true;
         }
     }
+
+    cachedPresetName = presetName;
+    cachedPresetData = data;
 
     return {
         data,
@@ -320,6 +345,47 @@ export async function savePresetData(data) {
         }
         ctx.saveSettingsDebounced?.();
     }
+}
+
+let savePresetTimer = null;
+let pendingPresetData = null;
+let pendingPresetName = null;
+
+/**
+ * Updates live `chatCompletionSettings.extensions` immediately in memory (0ms)
+ * and debounces the heavy network preset save so UI taps have zero lag.
+ * @param {Object} data
+ * @param {number} [delayMs=500]
+ */
+export function savePresetDataDebounced(data, delayMs = 500) {
+    const ctx = window.SillyTavern?.getContext?.();
+    const currentName = ctx?.getPresetManager?.()?.getSelectedPresetName?.() ?? null;
+    if (ctx?.chatCompletionSettings) {
+        if (!ctx.chatCompletionSettings.extensions || typeof ctx.chatCompletionSettings.extensions !== 'object') {
+            ctx.chatCompletionSettings.extensions = {};
+        }
+        ctx.chatCompletionSettings.extensions[EXT_KEY] = structuredClone(data);
+        if (getGlobalSettings().syncBaibai) {
+            if (!ctx.chatCompletionSettings.extensions[BAIBAI_KEY]) {
+                ctx.chatCompletionSettings.extensions[BAIBAI_KEY] = {};
+            }
+            ctx.chatCompletionSettings.extensions[BAIBAI_KEY].presetPromptGroups = convertToBaibai(data.promptGroups);
+        }
+    }
+
+    pendingPresetData = data;
+    pendingPresetName = currentName;
+    clearTimeout(savePresetTimer);
+    savePresetTimer = setTimeout(() => {
+        const toSave = pendingPresetData;
+        const targetName = pendingPresetName;
+        pendingPresetData = null;
+        pendingPresetName = null;
+        const activeName = window.SillyTavern?.getContext?.()?.getPresetManager?.()?.getSelectedPresetName?.() ?? null;
+        if (toSave && activeName === targetName) {
+            savePresetData(toSave);
+        }
+    }, delayMs);
 }
 
 /**
