@@ -4,6 +4,7 @@
  * 2. Non-destructive folding of OpenAI preset miscellaneous parameters (`| 预设设置 ⌄`).
  */
 
+import { bindViewportPin } from './dialog.js';
 import {
     getGlobalSettings,
     importFromBaibai,
@@ -133,7 +134,11 @@ function openQuickSettingsModal() {
         }
     });
 
-    const close = () => setTimeout(() => backdrop.remove(), 40);
+    let unbindViewport = null;
+    const close = () => {
+        unbindViewport?.();
+        setTimeout(() => backdrop.remove(), 40);
+    };
     for (const evt of ['touchstart', 'mousedown', 'mouseup', 'touchend']) {
         backdrop.addEventListener(evt, e => e.stopPropagation());
     }
@@ -142,6 +147,7 @@ function openQuickSettingsModal() {
         if (e.target === backdrop || e.target.closest('.bb-qs-close')) close();
     });
     document.body.appendChild(backdrop);
+    unbindViewport = bindViewportPin(backdrop);
 }
 
 /**

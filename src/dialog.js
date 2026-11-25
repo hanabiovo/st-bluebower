@@ -178,6 +178,65 @@ export function openItemDialog({ itemName, note = '', groupId = null, groups = [
     }));
 }
 
+/**
+ * Pins a fixed modal backdrop to `window.visualViewport` so mobile virtual keyboard
+ * open/close never causes the dialog to drift to the top or get stuck scrolled.
+ * @param {HTMLElement} backdropEl
+ * @returns {() => void} cleanup function
+ */
+export function bindViewportPin(backdropEl) {
+    let timers = [];
+    const clearTimers = () => {
+        for (const t of timers) clearTimeout(t);
+        timers = [];
+    };
+
+    const sync = () => {
+        if (!backdropEl.isConnected) return;
+        if (window.scrollX !== 0 || window.scrollY !== 0) {
+            window.scrollTo(0, 0);
+        }
+        const vv = window.visualViewport;
+        if (vv) {
+            backdropEl.style.top = `${Math.round(vv.offsetTop)}px`;
+            backdropEl.style.left = `${Math.round(vv.offsetLeft)}px`;
+            backdropEl.style.width = `${Math.round(vv.width)}px`;
+            backdropEl.style.height = `${Math.round(vv.height)}px`;
+            backdropEl.style.right = 'auto';
+            backdropEl.style.bottom = 'auto';
+        }
+    };
+
+    const settleSync = () => {
+        clearTimers();
+        sync();
+        requestAnimationFrame(sync);
+        for (const delay of [60, 180, 360]) {
+            timers.push(setTimeout(sync, delay));
+        }
+    };
+
+    sync();
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', sync);
+    vv?.addEventListener('scroll', sync);
+    window.addEventListener('resize', sync);
+    backdropEl.addEventListener('focusin', settleSync);
+    backdropEl.addEventListener('focusout', settleSync);
+
+    return () => {
+        clearTimers();
+        vv?.removeEventListener('resize', sync);
+        vv?.removeEventListener('scroll', sync);
+        window.removeEventListener('resize', sync);
+        backdropEl.removeEventListener('focusin', settleSync);
+        backdropEl.removeEventListener('focusout', settleSync);
+        if (window.scrollX !== 0 || window.scrollY !== 0) {
+            window.scrollTo(0, 0);
+        }
+    };
+}
+
 function openFormDialog(html, extractor) {
     return new Promise((resolve) => {
         closePopMenu();
@@ -196,8 +255,13 @@ function openFormDialog(html, extractor) {
             backdrop.addEventListener(evt, e => e.stopPropagation());
         }
 
+        let unbindViewport = null;
         const close = (result) => {
             document.removeEventListener('keydown', onKey);
+            if (document.activeElement instanceof HTMLElement && backdrop.contains(document.activeElement)) {
+                document.activeElement.blur();
+            }
+            unbindViewport?.();
             if (dialogBackdrop === backdrop) dialogBackdrop = null;
             setTimeout(() => backdrop.remove(), 40);
             resolve(result);
@@ -222,8 +286,7 @@ function openFormDialog(html, extractor) {
 
         document.addEventListener('keydown', onKey);
         document.body.appendChild(backdrop);
-
-        const input = backdrop.querySelector('input[type="text"]');
-        if (input) setTimeout(() => input.focus(), 20);
+        unbindViewport = bindViewportPin(backdrop);
+        // Intentionally do NOT auto-focus inputs so mobile soft keyboard never pops up uninvited
     });
 }

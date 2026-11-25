@@ -146,7 +146,9 @@ function bindRegexToolbarEvents(toolbar) {
             searchInput.value = '';
         }
         scheduleEnhanceRegexLists();
-        if (rState.searchOpen) setTimeout(() => searchInput.focus(), 20);
+        if (rState.searchOpen && !window.matchMedia?.('(pointer: coarse)').matches) {
+            setTimeout(() => searchInput.focus({ preventScroll: true }), 20);
+        }
     });
 
     searchInput.addEventListener('input', () => {
@@ -647,6 +649,84 @@ function bindRegexContainerIfNeeded(regexContainer) {
         renderBatchDrawer();
     }, true);
 
+    const toggleRegexGroupHeader = (gHeader) => {
+        const storeScope = gHeader.dataset.bbStoreScope;
+        const store = getStore(storeScope);
+        const forceExpand = Boolean(rState.query) || rState.filter !== 'all';
+
+        if (gHeader.dataset.bbDefaultGroup === '1') {
+            store.defaultCollapsed = !(store.defaultCollapsed !== false);
+            if (!forceExpand) {
+                const isCollapsed = store.defaultCollapsed;
+                const icon = gHeader.querySelector('.bb-chevron i');
+                if (icon) {
+                    icon.classList.toggle('fa-chevron-right', isCollapsed);
+                    icon.classList.toggle('fa-chevron-down', !isCollapsed);
+                }
+                gHeader.parentElement?.querySelectorAll('[data-bb-default-member="1"]').forEach(el => {
+                    el.classList.toggle('bb-collapsed-hidden', isCollapsed);
+                });
+            }
+            persistStore(storeScope);
+            return;
+        }
+
+        const gid = gHeader.dataset.bbGroupId;
+        const group = store.groups.find(g => g.id === gid);
+        if (!group) return;
+        group.collapsed = !group.collapsed;
+        if (!forceExpand) {
+            const isCollapsed = group.collapsed;
+            const icon = gHeader.querySelector('.bb-chevron i');
+            if (icon) {
+                icon.classList.toggle('fa-chevron-right', isCollapsed);
+                icon.classList.toggle('fa-chevron-down', !isCollapsed);
+            }
+            gHeader.parentElement?.querySelectorAll(`[data-bb-member-of="${CSS.escape(gid)}"], [data-bb-note-of="${CSS.escape(gid)}"]`).forEach(el => {
+                el.classList.toggle('bb-collapsed-hidden', isCollapsed);
+            });
+        }
+        persistStore(storeScope);
+    };
+
+    let regexTapGesture = null;
+    let lastRegexTouchToggleAt = 0;
+
+    regexContainer.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' || e.isPrimary === false) return;
+        if (e.target.closest('#bb_regex_toolbar, [data-bb-act]')) return;
+        const gHeader = e.target.closest('.bb-regex-group-header');
+        if (!gHeader) return;
+        regexTapGesture = {
+            pointerId: e.pointerId,
+            header: gHeader,
+            x: e.clientX,
+            y: e.clientY,
+            moved: false,
+        };
+    });
+
+    regexContainer.addEventListener('pointermove', (e) => {
+        if (!regexTapGesture || e.pointerId !== regexTapGesture.pointerId) return;
+        if (Math.hypot(e.clientX - regexTapGesture.x, e.clientY - regexTapGesture.y) > 10) {
+            regexTapGesture.moved = true;
+        }
+    });
+
+    regexContainer.addEventListener('pointercancel', () => {
+        regexTapGesture = null;
+    });
+
+    regexContainer.addEventListener('pointerup', (e) => {
+        if (!regexTapGesture || e.pointerId !== regexTapGesture.pointerId) return;
+        const g = regexTapGesture;
+        regexTapGesture = null;
+        if (g.moved || e.target.closest('[data-bb-act]')) return;
+        if (e.target.closest('.bb-regex-group-header') !== g.header) return;
+        lastRegexTouchToggleAt = Date.now();
+        toggleRegexGroupHeader(g.header);
+    });
+
     regexContainer.addEventListener('click', async (e) => {
         if (e.target.closest('#bb_regex_toolbar')) return;
 
@@ -682,21 +762,12 @@ function bindRegexContainerIfNeeded(regexContainer) {
                     return;
                 }
 
-                const forceExpand = Boolean(rState.query) || rState.filter !== 'all';
-                store.defaultCollapsed = !(store.defaultCollapsed !== false);
-                if (!forceExpand) {
-                    const isCollapsed = store.defaultCollapsed;
-                    const icon = gHeader.querySelector('.bb-chevron i');
-                    if (icon) {
-                        icon.classList.toggle('fa-chevron-right', isCollapsed);
-                        icon.classList.toggle('fa-chevron-down', !isCollapsed);
-                    }
-                    const listEl = gHeader.parentElement;
-                    listEl?.querySelectorAll('[data-bb-default-member="1"]').forEach(el => {
-                        el.classList.toggle('bb-collapsed-hidden', isCollapsed);
-                    });
+                if (Date.now() - lastRegexTouchToggleAt < 450) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
                 }
-                persistStore(storeScope);
+                toggleRegexGroupHeader(gHeader);
                 return;
             }
 
@@ -731,7 +802,7 @@ function bindRegexContainerIfNeeded(regexContainer) {
                         const chk = row?.querySelector('.disable_regex');
                         if (chk) chk.checked = !u.enabled;
                     }
-                    await persistStore(storeScope);
+                    persistStore(storeScope);
                     scheduleEnhanceRegexLists();
                 } else if (act === 'edit') {
                     const res = await openGroupDialog({ mode: 'edit', group });
@@ -739,7 +810,7 @@ function bindRegexContainerIfNeeded(regexContainer) {
                         group.name = res.name;
                         group.note = res.note;
                         group.exclusive = res.exclusive;
-                        await persistStore(storeScope);
+                        persistStore(storeScope);
                         scheduleEnhanceRegexLists();
                     }
                 } else if (act === 'del') {
@@ -748,28 +819,19 @@ function bindRegexContainerIfNeeded(regexContainer) {
                     for (const meta of Object.values(store.items)) {
                         if (meta.groupId === gid) meta.groupId = null;
                     }
-                    await persistStore(storeScope);
+                    persistStore(storeScope);
                     scheduleEnhanceRegexLists();
                     showNotice('已删除分组，条目已归入默认分组');
                 }
                 return;
             }
 
-            const forceExpand = Boolean(rState.query) || rState.filter !== 'all';
-            group.collapsed = !group.collapsed;
-            if (!forceExpand) {
-                const isCollapsed = group.collapsed;
-                const icon = gHeader.querySelector('.bb-chevron i');
-                if (icon) {
-                    icon.classList.toggle('fa-chevron-right', isCollapsed);
-                    icon.classList.toggle('fa-chevron-down', !isCollapsed);
-                }
-                const listEl = gHeader.parentElement;
-                listEl?.querySelectorAll(`[data-bb-member-of="${CSS.escape(gid)}"], [data-bb-note-of="${CSS.escape(gid)}"]`).forEach(el => {
-                    el.classList.toggle('bb-collapsed-hidden', isCollapsed);
-                });
+            if (Date.now() - lastRegexTouchToggleAt < 450) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
             }
-            persistStore(storeScope);
+            toggleRegexGroupHeader(gHeader);
             return;
         }
 

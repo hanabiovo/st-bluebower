@@ -1,5 +1,14 @@
 /* Bluebower (园丁鸟) - Minimalist Native Prompt & Regex Grouping */
 
+/* High-specificity hidden rules so Flex/Grid rules on `li.completion_prompt_manager_prompt` never override collapse or filter */
+#completion_prompt_manager #completion_prompt_manager_list > li.bb-collapsed-hidden,
+#completion_prompt_manager #completion_prompt_manager_list > li.bb-filter-hidden,
+#completion_prompt_manager #completion_prompt_manager_list > li.bb-native-head-hidden,
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt.bb-collapsed-hidden.bb-collapsed-hidden,
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt.bb-filter-hidden.bb-filter-hidden,
+#regex_container .regex-script-label.bb-collapsed-hidden,
+#regex_container .regex-script-label.bb-filter-hidden,
+#regex_container .bb-group-note-li.bb-collapsed-hidden,
 .bb-collapsed-hidden,
 .bb-filter-hidden,
 .bb-native-head-hidden {
@@ -96,7 +105,7 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
 
 /* Use resilient Flex layout instead of positional Grid on prompt items so mobile drag-handles
    or other extensions' injected spans never shift columns or push toggles outside the border */
-#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt {
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt:not(.bb-collapsed-hidden):not(.bb-filter-hidden) {
     display: flex !important;
     flex-direction: row !important;
     flex-wrap: nowrap !important;
@@ -464,8 +473,9 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     border-radius: 8px !important;
     background: color-mix(in srgb, var(--SmartThemeBlurTintColor, transparent) 55%, var(--SmartThemeBodyColor, currentColor) 6%) !important;
     color: var(--SmartThemeBodyColor, inherit);
-    cursor: pointer;
+    cursor: pointer !important;
     user-select: none;
+    -webkit-user-select: none;
     transition: background 0.15s ease;
 }
 
@@ -557,8 +567,8 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     color: #ef4444;
 }
 
-#completion_prompt_manager #completion_prompt_manager_list > li.bb-group-note-li,
-.bb-group-note-li {
+#completion_prompt_manager #completion_prompt_manager_list > li.bb-group-note-li:not(.bb-collapsed-hidden):not(.bb-filter-hidden),
+.bb-group-note-li:not(.bb-collapsed-hidden):not(.bb-filter-hidden) {
     list-style: none !important;
     display: block !important;
     grid-template-columns: none !important;
@@ -634,6 +644,7 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     min-width: 136px;
     padding: 4px;
     border-radius: 8px;
+    font-family: var(--mainFontFamily, inherit);
     background: var(--SmartThemeBlurTintColor, #1c1e24);
     color: var(--SmartThemeBodyColor, #e5e7eb);
     border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.32));
@@ -728,15 +739,24 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 18%, transparent);
 }
 
-/* Inline modal dialog */
+/* Inline modal dialog — pinned to visualViewport on mobile so soft keyboard never causes top drift */
 .bb-dialog-backdrop {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    width: 100dvw;
+    height: 100vh;
+    height: 100dvh;
+    box-sizing: border-box;
     z-index: 10000;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    padding: 12px 16px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    font-family: var(--mainFontFamily, inherit);
     background: rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(3px);
 }
@@ -744,6 +764,10 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
 .bb-dialog-card {
     width: 100%;
     max-width: 380px;
+    max-height: calc(100% - 8px);
+    overflow-y: auto;
+    margin: auto;
+    box-sizing: border-box;
     background: var(--SmartThemeBlurTintColor, #1c1e24);
     color: var(--SmartThemeBodyColor, #e5e7eb);
     border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.3));

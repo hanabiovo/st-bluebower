@@ -113,7 +113,9 @@ function bindTopbarEvents(topbar) {
             searchInput.value = '';
         }
         scheduleEnhancePromptList();
-        if (pState.searchOpen) setTimeout(() => searchInput.focus(), 20);
+        if (pState.searchOpen && !window.matchMedia?.('(pointer: coarse)').matches) {
+            setTimeout(() => searchInput.focus({ preventScroll: true }), 20);
+        }
     });
 
     searchInput.addEventListener('input', () => {
@@ -257,7 +259,7 @@ function applyLockOrderState(listEl, locked) {
     const $ = window.jQuery;
     if ($ && typeof $(listEl).sortable === 'function') {
         try {
-            if ($(listEl).data('ui-sortable')) {
+            if ($(listEl).sortable('instance') || $(listEl).data('ui-sortable')) {
                 $(listEl).sortable('option', 'disabled', false);
                 $(listEl).sortable('option', 'items', locked ? '.bb-no-drag-items' : '.completion_prompt_manager_prompt_draggable');
             }
@@ -633,6 +635,67 @@ function bindListIfNeeded(listEl) {
         renderBatchDrawer();
     }, true);
 
+    const togglePromptGroupHeader = (groupHeader) => {
+        const gid = groupHeader.dataset.bbGroupId;
+        const store = pState.presetData?.promptGroups;
+        const group = store?.groups?.find(g => g.id === gid);
+        if (!group) return;
+
+        const forceExpand = Boolean(pState.query) || pState.filter !== 'all';
+        group.collapsed = !group.collapsed;
+        if (!forceExpand) {
+            const isCollapsed = group.collapsed;
+            const icon = groupHeader.querySelector('.bb-chevron i');
+            if (icon) {
+                icon.classList.toggle('fa-chevron-right', isCollapsed);
+                icon.classList.toggle('fa-chevron-down', !isCollapsed);
+            }
+            listEl.querySelectorAll(`[data-bb-member-of="${CSS.escape(gid)}"], [data-bb-note-of="${CSS.escape(gid)}"]`).forEach(el => {
+                el.classList.toggle('bb-collapsed-hidden', isCollapsed);
+            });
+        }
+        savePresetDataDebounced(pState.presetData);
+    };
+
+    // Fast mobile tap handler (`pointerdown` -> `pointerup`) so slight 2-8px finger roll never drops group fold taps
+    let tapGesture = null;
+    let lastTouchToggleAt = 0;
+
+    listEl.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' || e.isPrimary === false) return;
+        if (e.target.closest('#bb_prompt_topbar, [data-bb-act]')) return;
+        const groupHeader = e.target.closest('.bb-group-header');
+        if (!groupHeader) return;
+        tapGesture = {
+            pointerId: e.pointerId,
+            header: groupHeader,
+            x: e.clientX,
+            y: e.clientY,
+            moved: false,
+        };
+    });
+
+    listEl.addEventListener('pointermove', (e) => {
+        if (!tapGesture || e.pointerId !== tapGesture.pointerId) return;
+        if (Math.hypot(e.clientX - tapGesture.x, e.clientY - tapGesture.y) > 10) {
+            tapGesture.moved = true;
+        }
+    });
+
+    listEl.addEventListener('pointercancel', () => {
+        tapGesture = null;
+    });
+
+    listEl.addEventListener('pointerup', (e) => {
+        if (!tapGesture || e.pointerId !== tapGesture.pointerId) return;
+        const g = tapGesture;
+        tapGesture = null;
+        if (g.moved || e.target.closest('[data-bb-act]')) return;
+        if (e.target.closest('.bb-group-header') !== g.header) return;
+        lastTouchToggleAt = Date.now();
+        togglePromptGroupHeader(g.header);
+    });
+
     listEl.addEventListener('click', async (e) => {
         if (e.target.closest('#bb_prompt_topbar')) return;
 
@@ -692,21 +755,12 @@ function bindListIfNeeded(listEl) {
                 return;
             }
 
-            // Instant 0ms DOM collapse/expand without rebuilding the whole list
-            const forceExpand = Boolean(pState.query) || pState.filter !== 'all';
-            group.collapsed = !group.collapsed;
-            if (!forceExpand) {
-                const isCollapsed = group.collapsed;
-                const icon = groupHeader.querySelector('.bb-chevron i');
-                if (icon) {
-                    icon.classList.toggle('fa-chevron-right', isCollapsed);
-                    icon.classList.toggle('fa-chevron-down', !isCollapsed);
-                }
-                listEl.querySelectorAll(`[data-bb-member-of="${CSS.escape(gid)}"], [data-bb-note-of="${CSS.escape(gid)}"]`).forEach(el => {
-                    el.classList.toggle('bb-collapsed-hidden', isCollapsed);
-                });
+            if (Date.now() - lastTouchToggleAt < 450) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
             }
-            savePresetDataDebounced(pState.presetData);
+            togglePromptGroupHeader(groupHeader);
             return;
         }
 
