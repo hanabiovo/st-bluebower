@@ -10,6 +10,17 @@ import {
 } from './storage.js';
 import { batchSetPromptsEnabled } from './st-bridge.js';
 
+const CONTEXT_MARKER_IDS = new Set([
+    'chatHistory',
+    'worldInfoBefore',
+    'worldInfoAfter',
+    'charDescription',
+    'charPersonality',
+    'scenario',
+    'personaDescription',
+    'dialogueExamples',
+]);
+
 const pState = {
     initialized: false,
     containerObserver: null,
@@ -28,7 +39,13 @@ const pState = {
     presetData: null,
     searchTimer: null,
     noticeTimer: null,
+    fallbackTokenCache: new Map(),
+    fallbackCalcToken: 0,
 };
+
+function isContextMarkerItem(li, id) {
+    return li.classList.contains('completion_prompt_manager_marker') || CONTEXT_MARKER_IDS.has(id);
+}
 
 function esc(str) {
     return String(str ?? '')
@@ -74,6 +91,7 @@ function ensureTopbarLi() {
             <div class="bb-topbar-status">
                 <i class="fa-solid fa-dove bb-bird-icon" title="园丁鸟 (Bluebower)"></i>
                 <span class="bb-status-text">预设分组</span>
+                <span class="bb-topbar-tokens" title="仅统计已启用的纯预设提示词 Token（不含聊天记录、世界书、角色卡与人设等上下文槽位）"></span>
                 <span class="bb-inline-notice"></span>
             </div>
             <div class="bb-topbar-icons">
@@ -255,7 +273,7 @@ function bindTopbarEvents(topbar) {
     });
 }
 
-function syncTopbarControls(enabledTotal, totalCount) {
+function syncTopbarControls(enabledTotal, totalCount, presetTokenSum = 0) {
     const topbar = pState.topbarLi;
     if (!topbar || !pState.presetData) return;
 
@@ -263,7 +281,11 @@ function syncTopbarControls(enabledTotal, totalCount) {
     if (totalCount > 0) {
         topbar.querySelector('.bb-status-text').textContent = locked
             ? `已启用 ${enabledTotal}/${totalCount}`
-            : `原序调序 (${enabledTotal}/${totalCount})`;
+            : `原序 (${enabledTotal}/${totalCount})`;
+    }
+    const tokEl = topbar.querySelector('.bb-topbar-tokens');
+    if (tokEl) {
+        tokEl.textContent = presetTokenSum > 0 ? `· ${presetTokenSum} Token` : '';
     }
 
     const hasSearchOrFilter = pState.searchOpen || Boolean(pState.query) || pState.filter !== 'all';
@@ -331,6 +353,31 @@ function getCleanPromptName(li, fallbackId) {
     return fallbackId;
 }
 
+function computeFallbackPresetTokensAsync(missingPrompts) {
+    const ctx = window.SillyTavern?.getContext?.();
+    if (typeof ctx?.getTokenCountAsync !== 'function' || !missingPrompts.length) return;
+
+    const runId = ++pState.fallbackCalcToken;
+    (async () => {
+        let updated = false;
+        for (const item of missingPrompts) {
+            if (runId !== pState.fallbackCalcToken) return;
+            try {
+                // Strip ST comment macros `{{// ... }}` when estimating outside of a chat
+                const cleaned = String(item.content || '').replace(/\{\{\/\/[\s\S]*?\}\}/g, '').trim();
+                const count = cleaned ? await ctx.getTokenCountAsync(cleaned) : 0;
+                pState.fallbackTokenCache.set(item.cacheKey, Number.isFinite(count) && count > 0 ? count : 0);
+                updated = true;
+            } catch {
+                pState.fallbackTokenCache.set(item.cacheKey, 0);
+            }
+        }
+        if (updated && runId === pState.fallbackCalcToken) {
+            scheduleEnhancePromptList();
+        }
+    })();
+}
+
 export function scheduleEnhancePromptList() {
     if (pState.rafId) cancelAnimationFrame(pState.rafId);
     pState.rafId = requestAnimationFrame(() => {
@@ -370,7 +417,7 @@ function enhancePromptList() {
             if (listEl.firstElementChild !== topbarLi) {
                 listEl.prepend(topbarLi);
             }
-            syncTopbarControls(0, 0);
+            syncTopbarControls(0, 0, 0);
             renderStarredMirror([], false);
             return;
         }
@@ -382,6 +429,15 @@ function enhancePromptList() {
         });
         nativeItems.sort((a, b) => Number(a.dataset.bbOrigIdx) - Number(b.dataset.bbOrigIdx));
 
+        const ctx = window.SillyTavern?.getContext?.();
+        const rawPromptsArr = Array.isArray(ctx?.chatCompletionSettings?.prompts) ? ctx.chatCompletionSettings.prompts : [];
+        const rawPromptMap = new Map(rawPromptsArr.filter(Boolean).map(p => [p.identifier, p]));
+        const tokenizerName = String(ctx?.getTokenizerModel?.() || 'default');
+        const hasLiveDomTokens = nativeItems.some(
+            el => Number.parseInt(el.querySelector('.prompt_manager_prompt_tokens')?.dataset?.pmTokens || '', 10) > 0,
+        );
+        const missingFallbackPrompts = [];
+
         const store = pState.presetData.promptGroups;
         const groupMap = new Map(store.groups.map(g => [g.id, g]));
         const itemsByGroup = new Map(store.groups.map(g => [g.id, []]));
@@ -389,6 +445,7 @@ function enhancePromptList() {
         const starred = [];
         const forceExpand = Boolean(pState.query) || pState.filter !== 'all';
         let enabledTotal = 0;
+        let presetTokenSum = 0;
 
         for (const li of nativeItems) {
             const id = li.dataset.pmIdentifier;
@@ -397,9 +454,31 @@ function enhancePromptList() {
             const enabled = !li.classList.contains('completion_prompt_manager_prompt_disabled');
             if (enabled) enabledTotal++;
 
+            const isMarker = isContextMarkerItem(li, id);
             const nameText = getCleanPromptName(li, id);
             const rawTok = Number.parseInt(li.querySelector('.prompt_manager_prompt_tokens')?.dataset?.pmTokens || '', 10);
-            const tokenVal = Number.isFinite(rawTok) && rawTok > 0 ? rawTok : 0;
+            let tokenVal = Number.isFinite(rawTok) && rawTok > 0 ? rawTok : 0;
+
+            // Outside a chat (`总 Token 数量：0`), use cached tokenizer fallback for enabled non-marker preset prompts
+            if (!hasLiveDomTokens && !isMarker && enabled) {
+                const pObj = rawPromptMap.get(id);
+                const content = typeof pObj?.content === 'string' ? pObj.content : '';
+                if (content) {
+                    const cacheKey = `${tokenizerName}::${id}::${content.length}::${content.slice(0, 24)}`;
+                    if (pState.fallbackTokenCache.has(cacheKey)) {
+                        tokenVal = pState.fallbackTokenCache.get(cacheKey) || 0;
+                    } else {
+                        missingFallbackPrompts.push({ id, cacheKey, content });
+                    }
+                }
+            }
+
+            // Pure preset prompt token count (excludes chatHistory, worldInfo, charCard, persona, etc.)
+            const presetTokVal = isMarker ? 0 : tokenVal;
+            if (enabled) {
+                presetTokenSum += presetTokVal;
+            }
+
             const group = meta.groupId && groupMap.has(meta.groupId) ? groupMap.get(meta.groupId) : null;
 
             const matchFilter = (pState.filter !== 'enabled' || enabled)
@@ -417,17 +496,21 @@ function enhancePromptList() {
             decoratePromptItem(li, id, meta, group, locked);
 
             if (matchFilter && meta.starred) {
-                starred.push({ id, name: nameText, enabled, tokenVal, note: meta.note });
+                starred.push({ id, name: nameText, enabled, tokenVal: presetTokVal, note: meta.note });
             }
 
-            const rec = { li, id, enabled, tokenVal, matchFilter, group };
+            const rec = { li, id, enabled, tokenVal: presetTokVal, matchFilter, group };
             itemRecords.push(rec);
             if (group) {
                 itemsByGroup.get(group.id).push(rec);
             }
         }
 
-        syncTopbarControls(enabledTotal, itemRecords.length);
+        if (missingFallbackPrompts.length > 0) {
+            computeFallbackPresetTokensAsync(missingFallbackPrompts);
+        }
+
+        syncTopbarControls(enabledTotal, itemRecords.length, presetTokenSum);
         renderStarredMirror(starred, forceExpand);
 
         const frag = document.createDocumentFragment();
@@ -467,7 +550,7 @@ function enhancePromptList() {
                 <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
                 <span class="bb-group-name">${esc(group.name)}</span>
                 <span class="bb-group-meta">(${enabledCount}/${entries.length})</span>
-                ${tokenSum > 0 ? `<span class="bb-group-tokens" title="组内已启用 Token">~${formatTokens(tokenSum)}</span>` : ''}
+                ${tokenSum > 0 ? `<span class="bb-group-tokens" title="组内已启用纯预设词条 Token（不含世界书、聊天记录等上下文槽位）">~${formatTokens(tokenSum)}</span>` : ''}
                 ${group.exclusive ? '<span class="bb-tag bb-tag-exclusive" title="互斥单选组">互斥</span>' : ''}
                 <span class="bb-group-controls">
                     <span class="bb-group-toggle-icon fa-solid ${enabledCount > 0 ? 'fa-toggle-on is-on' : 'fa-toggle-off'}" data-bb-act="toggle" title="整组开关"></span>

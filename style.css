@@ -236,6 +236,13 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     white-space: nowrap;
 }
 
+.bb-topbar-tokens {
+    font-size: 0.86em;
+    opacity: 0.62;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 .bb-inline-notice {
     font-size: 0.84em;
     color: var(--SmartThemeQuoteColor, #3b82f6);
