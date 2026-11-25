@@ -1,4 +1,4 @@
-import { openGroupDialog, openItemDialog } from './dialog.js';
+import { openBatchMoveDialog, openGroupDialog, openItemDialog } from './dialog.js';
 import {
     getGlobalSettings,
     loadPresetData,
@@ -206,41 +206,63 @@ function bindRegexToolbarEvents(toolbar) {
         const action = btn.dataset.batchAction;
         if (action === 'clear') {
             rState.selectedItems.clear();
+            rState.lastBatchId = null;
             scheduleEnhanceRegexLists();
-        } else if (action === 'select-all') {
-            for (const cfg of CONTAINERS) {
-                const listEl = document.getElementById(cfg.id);
-                listEl?.querySelectorAll('.regex-script-label:not(.bb-collapsed-hidden):not(.bb-filter-hidden)').forEach(row => {
-                    if (row.id) rState.selectedItems.set(row.id, { origin: cfg.origin, storeScope: cfg.storeScope });
-                });
-            }
+        } else if (action === 'exit') {
+            rState.selectedItems.clear();
+            rState.lastBatchId = null;
+            rState.batchMode = false;
             scheduleEnhanceRegexLists();
-        } else if (action === 'apply') {
-            const targetVal = toolbar.querySelector('.bb-batch-target')?.value || '';
-            const [targetScope, targetGid] = targetVal ? targetVal.split(':') : ['', ''];
-            const dirtyScopes = new Set();
-            let movedCount = 0;
+        } else if (action === 'choose-dest') {
+            const count = rState.selectedItems.size;
+            if (!count) return;
+            const firstInfo = rState.selectedItems.values().next().value;
+            const itemScope = firstInfo.storeScope;
+            const scopeLabel = CONTAINERS.find(c => c.storeScope === itemScope)?.label || '';
+            const store = getStore(itemScope);
 
-            for (const [id, info] of rState.selectedItems.entries()) {
-                const itemScope = info.storeScope;
-                const store = getStore(itemScope);
+            const dest = await openBatchMoveDialog({
+                count,
+                groups: store.groups,
+                ungroupLabel: '移入「默认」（取消分组）',
+                scopeLabel,
+            });
+            if (!dest) return; // Cancelled: keep current selection intact!
+
+            let targetGid = null;
+            let noticeMsg = '';
+            if (dest.type === 'new') {
+                targetGid = makeId();
+                store.groups.push({
+                    id: targetGid,
+                    name: dest.name,
+                    order: store.groups.length,
+                    collapsed: false,
+                    enabled: true,
+                    exclusive: dest.exclusive,
+                    note: '',
+                });
+                normalizeGroupStore(store);
+                noticeMsg = `已新建「${dest.name}」并移入 ${count} 项正则`;
+            } else if (dest.type === 'group') {
+                targetGid = dest.groupId;
+                noticeMsg = `已将 ${count} 项正则移入「${dest.groupName}」`;
+            } else {
+                targetGid = null;
+                noticeMsg = `已将 ${count} 项正则归入默认分组`;
+            }
+
+            for (const id of rState.selectedItems.keys()) {
                 if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
-                if (!targetGid) {
-                    store.items[id].groupId = null;
-                    dirtyScopes.add(itemScope);
-                    movedCount++;
-                } else if (targetScope === itemScope) {
-                    store.items[id].groupId = targetGid;
-                    dirtyScopes.add(itemScope);
-                    movedCount++;
-                }
+                store.items[id].groupId = targetGid;
             }
 
             rState.selectedItems.clear();
+            rState.lastBatchId = null;
             rState.batchMode = false;
-            for (const s of dirtyScopes) await persistStore(s);
+            persistStore(itemScope);
             scheduleEnhanceRegexLists();
-            showNotice(movedCount > 0 ? `已移动 ${movedCount} 项正则` : '所选正则与目标分组不在同一范围');
+            showNotice(noticeMsg);
         }
     });
 }
@@ -254,6 +276,7 @@ function syncRegexTopbar() {
     topbar.querySelectorAll('.bb-pill').forEach(p => {
         p.classList.toggle('is-active', p.dataset.filter === rState.filter);
     });
+    topbar.classList.toggle('is-batch-active', rState.batchMode);
     topbar.querySelector('.bb-batch-btn').classList.toggle('is-active', rState.batchMode);
     renderBatchDrawer();
 }
@@ -267,23 +290,18 @@ function renderBatchDrawer() {
         return;
     }
 
-    const globalGroups = getStore('global').groups;
-    const presetGroups = getStore('preset').groups;
-    const scopedGroups = getStore('scoped').groups;
-    const options = [
-        '<option value="">移入：默认（取消分组）</option>',
-        ...globalGroups.map(g => `<option value="global:${esc(g.id)}">全局组：${esc(g.name)}</option>`),
-        ...presetGroups.map(g => `<option value="preset:${esc(g.id)}">预设组：${esc(g.name)}</option>`),
-        ...scopedGroups.map(g => `<option value="scoped:${esc(g.id)}">角色组：${esc(g.name)}</option>`),
-    ].join('');
+    const count = rState.selectedItems.size;
+    const firstScope = count ? rState.selectedItems.values().next().value?.storeScope : null;
+    const scopeLabel = firstScope ? (CONTAINERS.find(c => c.storeScope === firstScope)?.label || '') : '';
 
     el.classList.add('is-open');
     el.innerHTML = `
-        <span class="bb-batch-count" title="直接点击下方正则条目即可选中（支持 Shift 连选）">已选 <strong>${rState.selectedItems.size}</strong> 项</span>
-        <select class="bb-batch-target text_pole">${options}</select>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${rState.selectedItems.size ? '' : 'disabled'}>移动</button>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear">清空</button>
+        <span class="bb-batch-count ${count ? '' : 'is-empty'}">${count ? `已选 <strong>${count}</strong> 项${scopeLabel ? ` · ${esc(scopeLabel)}` : ''}` : '点击下方正则即可多选'}</span>
+        <div class="bb-batch-actions">
+            <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="choose-dest" ${count ? '' : 'disabled'}>移入分组…</button>
+            <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear" ${count ? '' : 'disabled'}>重选</button>
+            <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="exit">完成</button>
+        </div>
     `;
 }
 
@@ -615,10 +633,19 @@ function bindRegexContainerIfNeeded(regexContainer) {
         e.stopPropagation();
 
         const id = row.id;
+        const rowScope = row.dataset.bbScope;
         const nextSelected = !rState.selectedItems.has(id);
 
+        if (nextSelected && rState.selectedItems.size > 0) {
+            const activeScope = rState.selectedItems.values().next().value?.storeScope;
+            if (activeScope && activeScope !== rowScope) {
+                showNotice('单次多选仅限同一正则范围（全局/预设/角色）');
+                return;
+            }
+        }
+
         if (e.shiftKey && rState.lastBatchId && rState.lastBatchId !== id) {
-            const visibleRows = Array.from(regexContainer.querySelectorAll('.regex-script-label:not(.bb-collapsed-hidden):not(.bb-filter-hidden)'));
+            const visibleRows = Array.from(regexContainer.querySelectorAll(`.regex-script-label[data-bb-scope="${CSS.escape(rowScope)}"]:not(.bb-collapsed-hidden):not(.bb-filter-hidden)`));
             const i1 = visibleRows.findIndex(el => el.id === rState.lastBatchId);
             const i2 = visibleRows.findIndex(el => el.id === id);
             if (i1 !== -1 && i2 !== -1) {

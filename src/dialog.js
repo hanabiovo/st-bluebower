@@ -179,6 +179,155 @@ export function openItemDialog({ itemName, note = '', groupId = null, groups = [
 }
 
 /**
+ * Opens a destination picker dialog after selecting multiple items ("select first, choose group second").
+ * Requires an explicit choice before unlocking Confirm so users never move to the wrong group by accident.
+ * Also supports creating a brand-new group on the spot and moving selected items into it.
+ * @param {{ count: number, groups: Array<{ id: string, name: string }>, ungroupLabel?: string, scopeLabel?: string }} opts
+ * @returns {Promise<{ type: 'group', groupId: string, groupName: string } | { type: 'new', name: string, exclusive: boolean } | { type: 'ungroup' } | null>}
+ */
+export function openBatchMoveDialog({ count, groups = [], ungroupLabel = '移出分组（设为未分组）', scopeLabel = '' }) {
+    return new Promise((resolve) => {
+        closePopMenu();
+        if (dialogBackdrop) {
+            dialogBackdrop.remove();
+            dialogBackdrop = null;
+        }
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'bb-dialog-backdrop ui-widget';
+        const scopeTitle = scopeLabel ? `${esc(scopeLabel)} · ` : '';
+        const groupButtonsHtml = groups.length
+            ? groups.map(g => `
+                <button type="button" class="bb-dest-item" data-choice="group:${esc(g.id)}" data-name="${esc(g.name)}">
+                    <i class="fa-regular fa-folder bb-dest-icon"></i>
+                    <span class="bb-dest-name">${esc(g.name)}</span>
+                    <i class="fa-solid fa-check bb-dest-check"></i>
+                </button>
+            `).join('')
+            : '<div class="bb-dest-empty">当前还没有已建分组，可直接下方新建并移入</div>';
+
+        backdrop.innerHTML = `
+            <form class="bb-dialog-card bb-batch-dest-card">
+                <div class="bb-dialog-title">${scopeTitle}将已选 ${count} 项移入…</div>
+                <div class="bb-dest-list" role="listbox">
+                    ${groupButtonsHtml}
+                </div>
+                <div class="bb-dest-extra">
+                    <button type="button" class="bb-dest-item bb-dest-new-trigger" data-choice="__new__">
+                        <i class="fa-solid fa-folder-plus bb-dest-icon"></i>
+                        <span class="bb-dest-name">新建分组并移入…</span>
+                        <i class="fa-solid fa-check bb-dest-check"></i>
+                    </button>
+                    <div class="bb-dest-new-box">
+                        <input type="text" class="text_pole bb-dest-new-input" maxlength="40" placeholder="输入新分组名称..." />
+                        <label class="bb-field-check">
+                            <input type="checkbox" class="bb-dest-new-excl" />
+                            <span>设为互斥单选组</span>
+                        </label>
+                    </div>
+                    <button type="button" class="bb-dest-item bb-dest-ungroup" data-choice="__ungroup__">
+                        <i class="fa-solid fa-folder-open bb-dest-icon"></i>
+                        <span class="bb-dest-name">${esc(ungroupLabel)}</span>
+                        <i class="fa-solid fa-check bb-dest-check"></i>
+                    </button>
+                </div>
+                <div class="bb-dialog-footer">
+                    <button type="button" class="menu_button bb-dialog-cancel">取消</button>
+                    <button type="submit" class="menu_button bb-btn-primary bb-dest-confirm" disabled>确定移入</button>
+                </div>
+            </form>
+        `;
+        dialogBackdrop = backdrop;
+
+        for (const evt of ['touchstart', 'mousedown', 'mouseup', 'touchend']) {
+            backdrop.addEventListener(evt, e => e.stopPropagation());
+        }
+
+        let selectedChoice = null;
+        let selectedName = '';
+        const newBox = backdrop.querySelector('.bb-dest-new-box');
+        const newInput = backdrop.querySelector('.bb-dest-new-input');
+        const newExcl = backdrop.querySelector('.bb-dest-new-excl');
+        const confirmBtn = backdrop.querySelector('.bb-dest-confirm');
+
+        const syncConfirmState = () => {
+            if (!selectedChoice) {
+                confirmBtn.disabled = true;
+                return;
+            }
+            if (selectedChoice === '__new__') {
+                confirmBtn.disabled = !newInput.value.trim();
+                return;
+            }
+            confirmBtn.disabled = false;
+        };
+
+        backdrop.querySelectorAll('.bb-dest-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                selectedChoice = btn.dataset.choice;
+                selectedName = btn.dataset.name || '';
+                backdrop.querySelectorAll('.bb-dest-item').forEach(el => {
+                    el.classList.toggle('is-selected', el === btn);
+                });
+                const isNew = selectedChoice === '__new__';
+                newBox.classList.toggle('is-open', isNew);
+                syncConfirmState();
+                if (isNew && !window.matchMedia?.('(pointer: coarse)').matches) {
+                    setTimeout(() => newInput.focus({ preventScroll: true }), 20);
+                }
+            });
+        });
+
+        newInput.addEventListener('input', syncConfirmState);
+
+        let unbindViewport = null;
+        const close = (result) => {
+            document.removeEventListener('keydown', onKey);
+            if (document.activeElement instanceof HTMLElement && backdrop.contains(document.activeElement)) {
+                document.activeElement.blur();
+            }
+            unbindViewport?.();
+            if (dialogBackdrop === backdrop) dialogBackdrop = null;
+            setTimeout(() => backdrop.remove(), 40);
+            resolve(result);
+        };
+
+        const onKey = (e) => {
+            if (e.key === 'Escape') close(null);
+        };
+
+        backdrop.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (e.target === backdrop || e.target.closest('.bb-dialog-cancel')) {
+                close(null);
+            }
+        });
+
+        backdrop.querySelector('form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (!selectedChoice) return;
+            if (selectedChoice === '__ungroup__') {
+                close({ type: 'ungroup' });
+            } else if (selectedChoice === '__new__') {
+                const name = newInput.value.trim();
+                if (!name) return;
+                close({ type: 'new', name, exclusive: Boolean(newExcl.checked) });
+            } else if (selectedChoice.startsWith('group:')) {
+                close({
+                    type: 'group',
+                    groupId: selectedChoice.slice('group:'.length),
+                    groupName: selectedName,
+                });
+            }
+        });
+
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(backdrop);
+        unbindViewport = bindViewportPin(backdrop);
+    });
+}
+
+/**
  * Pins a fixed modal backdrop to `window.visualViewport` so mobile virtual keyboard
  * open/close never causes the dialog to drift to the top or get stuck scrolled.
  * @param {HTMLElement} backdropEl

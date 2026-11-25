@@ -1,4 +1,4 @@
-import { openGroupDialog, openItemDialog, openPopMenu } from './dialog.js';
+import { openBatchMoveDialog, openGroupDialog, openItemDialog, openPopMenu } from './dialog.js';
 import {
     getGlobalSettings,
     loadPresetData,
@@ -177,24 +177,57 @@ function bindTopbarEvents(topbar) {
         const action = btn.dataset.batchAction;
         if (action === 'clear') {
             pState.selectedIds.clear();
+            pState.lastBatchId = null;
             scheduleEnhancePromptList();
-        } else if (action === 'select-all') {
-            getListEl()?.querySelectorAll('.completion_prompt_manager_prompt:not(.bb-collapsed-hidden):not(.bb-filter-hidden)').forEach(li => {
-                if (li.dataset.pmIdentifier) pState.selectedIds.add(li.dataset.pmIdentifier);
-            });
+        } else if (action === 'exit') {
+            pState.selectedIds.clear();
+            pState.lastBatchId = null;
+            pState.batchMode = false;
             scheduleEnhancePromptList();
-        } else if (action === 'apply') {
-            const targetGid = topbar.querySelector('.bb-batch-target')?.value || null;
+        } else if (action === 'choose-dest') {
+            const count = pState.selectedIds.size;
+            if (!count) return;
             const store = pState.presetData.promptGroups;
+            const dest = await openBatchMoveDialog({
+                count,
+                groups: store.groups,
+                ungroupLabel: '移出分组（设为未分组）',
+            });
+            if (!dest) return; // Cancelled: keep current selection intact!
+
+            let targetGid = null;
+            let noticeMsg = '';
+            if (dest.type === 'new') {
+                targetGid = makeId();
+                store.groups.push({
+                    id: targetGid,
+                    name: dest.name,
+                    order: store.groups.length,
+                    collapsed: false,
+                    enabled: true,
+                    exclusive: dest.exclusive,
+                    note: '',
+                });
+                normalizeGroupStore(store);
+                noticeMsg = `已新建「${dest.name}」并移入 ${count} 项`;
+            } else if (dest.type === 'group') {
+                targetGid = dest.groupId;
+                noticeMsg = `已将 ${count} 项移入「${dest.groupName}」`;
+            } else {
+                targetGid = null;
+                noticeMsg = `已将 ${count} 项移出分组`;
+            }
+
             for (const id of pState.selectedIds) {
                 if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
                 store.items[id].groupId = targetGid;
             }
             pState.selectedIds.clear();
+            pState.lastBatchId = null;
             pState.batchMode = false;
             savePresetDataDebounced(pState.presetData);
             scheduleEnhancePromptList();
-            showNotice('批量移动完成');
+            showNotice(noticeMsg);
         }
     });
 
@@ -239,6 +272,7 @@ function syncTopbarControls(enabledTotal, totalCount) {
     topbar.querySelectorAll('.bb-pill').forEach(p => {
         p.classList.toggle('is-active', p.dataset.filter === pState.filter);
     });
+    topbar.classList.toggle('is-batch-active', pState.batchMode);
     topbar.querySelector('.bb-batch-btn').classList.toggle('is-active', pState.batchMode);
 
     const lockBtn = topbar.querySelector('.bb-lock-btn');
@@ -277,18 +311,15 @@ function renderBatchDrawer() {
         el.classList.remove('is-open');
         return;
     }
-    const groups = pState.presetData.promptGroups.groups;
-    const options = [
-        '<option value="">移入：未分组</option>',
-        ...groups.map(g => `<option value="${esc(g.id)}">移入：${esc(g.name)}</option>`),
-    ].join('');
+    const count = pState.selectedIds.size;
     el.classList.add('is-open');
     el.innerHTML = `
-        <span class="bb-batch-count" title="直接点击下方条目即可选中（支持 Shift 连选）">已选 <strong>${pState.selectedIds.size}</strong> 项</span>
-        <select class="bb-batch-target text_pole">${options}</select>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${pState.selectedIds.size ? '' : 'disabled'}>移动</button>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
-        <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear">清空</button>
+        <span class="bb-batch-count ${count ? '' : 'is-empty'}">${count ? `已选 <strong>${count}</strong> 项` : '点击下方条目即可多选'}</span>
+        <div class="bb-batch-actions">
+            <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="choose-dest" ${count ? '' : 'disabled'}>移入分组…</button>
+            <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="clear" ${count ? '' : 'disabled'}>重选</button>
+            <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="exit">完成</button>
+        </div>
     `;
 }
 

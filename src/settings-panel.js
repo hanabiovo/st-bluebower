@@ -87,11 +87,12 @@ function openQuickSettingsModal() {
             </label>
             <div class="bb-ext-settings-actions">
                 <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-qs-reimport">
-                    <i class="fa-solid fa-file-import"></i>
-                    <span>从柏宝箱重新导入当前预设分组</span>
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span>恢复为柏宝箱版分组</span>
                 </button>
                 <span class="bb-ext-status"></span>
             </div>
+            <div class="bb-ext-hint">重新读取当前预设内置的柏宝箱分组结构，不会清除你的星标与个人备注。</div>
             <div class="bb-dialog-footer">
                 <button type="button" class="menu_button bb-qs-close">关闭</button>
             </div>
@@ -128,9 +129,9 @@ function openQuickSettingsModal() {
         if (res.imported) {
             await savePresetData(res.data);
             onPromptPresetChanged();
-            statusEl.textContent = '重新导入成功';
+            statusEl.textContent = '已恢复为柏宝箱版分组';
         } else {
-            statusEl.textContent = '未检测到柏宝箱数据';
+            statusEl.textContent = '当前预设未检测到柏宝箱分组数据';
         }
     });
 
@@ -196,11 +197,12 @@ export function initExtensionSettingsPanel() {
                     </label>
                     <div class="bb-ext-settings-actions">
                         <button type="button" id="bb_cfg_reimport_baibai" class="menu_button bb-btn-sm bb-drawer-btn">
-                            <i class="fa-solid fa-file-import"></i>
-                            <span>从柏宝箱重新导入当前预设分组</span>
+                            <i class="fa-solid fa-rotate-left"></i>
+                            <span>恢复为柏宝箱版分组</span>
                         </button>
                         <span id="bb_cfg_status" class="bb-ext-status"></span>
                     </div>
+                    <div class="bb-ext-hint">重新读取当前预设内置的柏宝箱分组结构，不会清除你的星标与个人备注。</div>
                 </div>
             </div>
         </div>
@@ -236,7 +238,7 @@ export function initExtensionSettingsPanel() {
         if (res.imported) {
             await savePresetData(res.data);
             onPromptPresetChanged();
-            showStatus('重新导入成功');
+            showStatus('已恢复为柏宝箱版分组');
         } else {
             showStatus('当前预设未检测到柏宝箱分组数据');
         }
