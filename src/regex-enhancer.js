@@ -27,6 +27,7 @@ const rState = {
     query: '',
     batchMode: false,
     selectedItems: new Map(), // id -> { origin, storeScope }
+    lastBatchId: null,
     presetData: null,
     searchTimer: null,
     noticeTimer: null,
@@ -98,7 +99,7 @@ function ensureRegexToolbar(regexContainer) {
     if (!rState.toolbarEl) {
         const toolbar = document.createElement('div');
         toolbar.id = 'bb_regex_toolbar';
-        toolbar.className = 'bb-list-topbar bb-regex-topbar';
+        toolbar.className = 'bb-list-topbar bb-regex-toolbar';
         toolbar.innerHTML = `
             <div class="bb-topbar-main">
                 <div class="bb-topbar-status">
@@ -189,7 +190,10 @@ function bindRegexToolbarEvents(toolbar) {
 
     toolbar.querySelector('.bb-batch-btn').addEventListener('click', () => {
         rState.batchMode = !rState.batchMode;
-        if (!rState.batchMode) rState.selectedItems.clear();
+        if (!rState.batchMode) {
+            rState.selectedItems.clear();
+            rState.lastBatchId = null;
+        }
         scheduleEnhanceRegexLists();
     });
 
@@ -264,7 +268,7 @@ function renderBatchDrawer() {
     const presetGroups = getStore('preset').groups;
     const scopedGroups = getStore('scoped').groups;
     const options = [
-        '<option value="">移入：未分组</option>',
+        '<option value="">移入：默认（取消分组）</option>',
         ...globalGroups.map(g => `<option value="global:${esc(g.id)}">全局组：${esc(g.name)}</option>`),
         ...presetGroups.map(g => `<option value="preset:${esc(g.id)}">预设组：${esc(g.name)}</option>`),
         ...scopedGroups.map(g => `<option value="scoped:${esc(g.id)}">角色组：${esc(g.name)}</option>`),
@@ -272,7 +276,7 @@ function renderBatchDrawer() {
 
     el.classList.add('is-open');
     el.innerHTML = `
-        <span class="bb-batch-count">已选 <strong>${rState.selectedItems.size}</strong> 项</span>
+        <span class="bb-batch-count" title="直接点击下方正则条目即可选中（支持 Shift 连选）">已选 <strong>${rState.selectedItems.size}</strong> 项</span>
         <select class="bb-batch-target text_pole">${options}</select>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${rState.selectedItems.size ? '' : 'disabled'}>移动</button>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
@@ -304,6 +308,7 @@ function enhanceAllRegexLists() {
         for (const cfg of CONTAINERS) {
             const listEl = document.getElementById(cfg.id);
             if (!listEl) continue;
+            listEl.classList.toggle('bb-batch-mode', rState.batchMode);
             enhanceSingleRegexContainer(listEl, cfg);
         }
     } finally {
@@ -331,6 +336,7 @@ function enhanceSingleRegexContainer(listEl, cfg) {
 
     const groupMap = new Map(store.groups.map(g => [g.id, g]));
     const itemsByGroup = new Map(store.groups.map(g => [g.id, []]));
+    const ungroupedEntries = [];
     const itemRecords = [];
     const forceExpand = Boolean(rState.query) || rState.filter !== 'all';
 
@@ -351,9 +357,10 @@ function enhanceSingleRegexContainer(listEl, cfg) {
             && (!rState.query
                 || nameText.toLowerCase().includes(rState.query)
                 || (meta.note || '').toLowerCase().includes(rState.query)
-                || (group?.name || '').toLowerCase().includes(rState.query));
+                || (group ? group.name.toLowerCase().includes(rState.query) : '默认'.includes(rState.query)));
 
         row.classList.toggle('bb-filter-hidden', !matchFilter);
+        row.classList.toggle('bb-batch-selected', rState.batchMode && rState.selectedItems.has(id));
         row.classList.remove('bb-collapsed-hidden', 'bb-grouped-child');
 
         decorateRegexRow(row, id, meta, group, cfg);
@@ -362,12 +369,15 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         itemRecords.push(rec);
         if (group) {
             itemsByGroup.get(group.id).push(rec);
+        } else {
+            ungroupedEntries.push(rec);
         }
     }
 
     const frag = document.createDocumentFragment();
     const hiddenTail = [];
     const placedGroups = new Set();
+    let placedDefaultGroup = false;
 
     const appendGroupBlock = (group) => {
         placedGroups.add(group.id);
@@ -413,6 +423,39 @@ function enhanceSingleRegexContainer(listEl, cfg) {
         }
     };
 
+    const appendDefaultGroupBlock = () => {
+        placedDefaultGroup = true;
+        const visibleEntries = ungroupedEntries.filter(e => e.matchFilter);
+        if (forceExpand && !visibleEntries.length && (!rState.query || !'默认'.includes(rState.query))) {
+            for (const e of ungroupedEntries) hiddenTail.push(e.row);
+            return;
+        }
+
+        const enabledCount = ungroupedEntries.filter(e => e.enabled).length;
+        const isCollapsed = (store.defaultCollapsed !== false) && !forceExpand;
+
+        const dHeader = document.createElement('div');
+        dHeader.className = `bb-group-header bb-regex-group-header bb-default-group-header ${enabledCount > 0 ? '' : 'is-group-disabled'}`;
+        dHeader.dataset.bbDefaultGroup = '1';
+        dHeader.dataset.bbStoreScope = cfg.storeScope;
+        dHeader.dataset.bbOrigin = cfg.origin;
+        dHeader.innerHTML = `
+            <span class="bb-chevron"><i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></span>
+            <span class="bb-group-name">默认</span>
+            <span class="bb-group-meta">(${enabledCount}/${ungroupedEntries.length})</span>
+            <span class="bb-group-controls">
+                <span class="bb-group-toggle-icon fa-solid ${enabledCount > 0 ? 'fa-toggle-on is-on' : 'fa-toggle-off'}" data-bb-act="toggle-default" title="默认组开关"></span>
+            </span>
+        `;
+        frag.appendChild(dHeader);
+
+        for (const entry of ungroupedEntries) {
+            entry.row.classList.add('bb-grouped-child');
+            if (isCollapsed) entry.row.classList.add('bb-collapsed-hidden');
+            frag.appendChild(entry.row);
+        }
+    };
+
     for (const group of store.groups) {
         if ((itemsByGroup.get(group.id) || []).length === 0) {
             appendGroupBlock(group);
@@ -424,8 +467,8 @@ function enhanceSingleRegexContainer(listEl, cfg) {
             if (!placedGroups.has(rec.group.id)) {
                 appendGroupBlock(rec.group);
             }
-        } else {
-            frag.appendChild(rec.row);
+        } else if (!placedDefaultGroup) {
+            appendDefaultGroupBlock();
         }
     }
 
@@ -438,12 +481,14 @@ function enhanceSingleRegexContainer(listEl, cfg) {
 
 /**
  * Folds Star, Group/Note (`fa-sliders`), and native Delete (`delete_regex`) inside
- * SillyTavern's native `.regex_script_buttons` (`...` ellipsis tray), leaving only
- * `[toggle] [...] [pencil]` visible on each regex row!
+ * SillyTavern's native `.regex_script_buttons` (`...` ellipsis tray).
  */
 function decorateRegexRow(row, id, meta, group, cfg) {
     const raw = findRawScript(id, cfg.origin);
     const scopeInfo = raw ? getRegexScopeInfo(raw) : null;
+
+    row.dataset.bbOrigin = cfg.origin;
+    row.dataset.bbScope = cfg.storeScope;
 
     const nameEl = row.querySelector('.regex_script_name');
     if (nameEl) {
@@ -484,20 +529,6 @@ function decorateRegexRow(row, id, meta, group, cfg) {
         }
     }
 
-    // Batch checkbox (only when batchMode is active)
-    let batchWrap = row.querySelector(':scope > .bb-regex-batch-wrap');
-    if (rState.batchMode) {
-        if (!batchWrap) {
-            batchWrap = document.createElement('div');
-            batchWrap.className = 'bb-regex-batch-wrap';
-            row.prepend(batchWrap);
-        }
-        batchWrap.innerHTML = `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" data-origin="${cfg.origin}" data-scope="${cfg.storeScope}" ${rState.selectedItems.has(id) ? 'checked' : ''} />`;
-    } else if (batchWrap) {
-        batchWrap.remove();
-    }
-
-    // Fold Star, Group/Note, and Delete into native `.regex_script_buttons` ellipsis tray
     const tray = row.querySelector('.regex_script_buttons');
     if (tray) {
         let bbTray = tray.querySelector('.bb-regex-tray-items');
@@ -564,15 +595,91 @@ function bindRegexContainerIfNeeded(regexContainer) {
     });
     rState.rootObserver.observe(regexContainer, { childList: true });
 
+    // Capture-phase row click in batchMode: click anywhere on `.regex-script-label` to select!
+    regexContainer.addEventListener('click', (e) => {
+        if (!rState.batchMode) return;
+        const row = e.target.closest('.regex-script-label');
+        if (!row || !row.id) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        const id = row.id;
+        const nextSelected = !rState.selectedItems.has(id);
+
+        if (e.shiftKey && rState.lastBatchId && rState.lastBatchId !== id) {
+            const visibleRows = Array.from(regexContainer.querySelectorAll('.regex-script-label:not(.bb-collapsed-hidden):not(.bb-filter-hidden)'));
+            const i1 = visibleRows.findIndex(el => el.id === rState.lastBatchId);
+            const i2 = visibleRows.findIndex(el => el.id === id);
+            if (i1 !== -1 && i2 !== -1) {
+                const [start, end] = i1 < i2 ? [i1, i2] : [i2, i1];
+                for (let i = start; i <= end; i++) {
+                    const r = visibleRows[i];
+                    if (!r.id) continue;
+                    if (nextSelected) {
+                        rState.selectedItems.set(r.id, { origin: r.dataset.bbOrigin, storeScope: r.dataset.bbScope });
+                    } else {
+                        rState.selectedItems.delete(r.id);
+                    }
+                    r.classList.toggle('bb-batch-selected', nextSelected);
+                }
+                rState.lastBatchId = id;
+                renderBatchDrawer();
+                return;
+            }
+        }
+
+        if (nextSelected) {
+            rState.selectedItems.set(id, { origin: row.dataset.bbOrigin, storeScope: row.dataset.bbScope });
+        } else {
+            rState.selectedItems.delete(id);
+        }
+        row.classList.toggle('bb-batch-selected', nextSelected);
+        rState.lastBatchId = id;
+        renderBatchDrawer();
+    }, true);
+
     regexContainer.addEventListener('click', async (e) => {
         if (e.target.closest('#bb_regex_toolbar')) return;
 
         const gHeader = e.target.closest('.bb-regex-group-header');
         if (gHeader) {
-            const gid = gHeader.dataset.bbGroupId;
             const storeScope = gHeader.dataset.bbStoreScope;
             const origin = gHeader.dataset.bbOrigin;
             const store = getStore(storeScope);
+
+            // Virtual "默认" group for ungrouped regex scripts
+            if (gHeader.dataset.bbDefaultGroup === '1') {
+                const actEl = e.target.closest('[data-bb-act="toggle-default"]');
+                if (actEl) {
+                    e.stopPropagation();
+                    const listEl = document.getElementById(CONTAINERS.find(c => c.origin === origin)?.id || '');
+                    if (!listEl) return;
+                    const validGroupIds = new Set(store.groups.map(g => g.id));
+                    const memberRows = Array.from(listEl.querySelectorAll('.regex-script-label'))
+                        .filter(row => {
+                            const gid = store.items[row.id]?.groupId;
+                            return !gid || !validGroupIds.has(gid);
+                        });
+                    const anyEnabled = memberRows.some(r => !r.querySelector('.disable_regex')?.checked);
+                    const nextEnabled = !anyEnabled;
+                    const updates = memberRows.map(r => ({ id: r.id, origin, enabled: nextEnabled }));
+                    await batchSetRegexEnabled(updates);
+                    for (const u of updates) {
+                        const row = document.getElementById(u.id);
+                        const chk = row?.querySelector('.disable_regex');
+                        if (chk) chk.checked = !u.enabled;
+                    }
+                    scheduleEnhanceRegexLists();
+                    return;
+                }
+
+                store.defaultCollapsed = !(store.defaultCollapsed !== false);
+                scheduleEnhanceRegexLists();
+                await persistStore(storeScope);
+                return;
+            }
+
+            const gid = gHeader.dataset.bbGroupId;
             const group = store.groups.find(g => g.id === gid);
             if (!group) return;
 
@@ -622,7 +729,7 @@ function bindRegexContainerIfNeeded(regexContainer) {
                     }
                     await persistStore(storeScope);
                     scheduleEnhanceRegexLists();
-                    showNotice('已删除分组');
+                    showNotice('已删除分组，条目已归入默认分组');
                 }
                 return;
             }
@@ -690,20 +797,6 @@ function bindRegexContainerIfNeeded(regexContainer) {
                     }
                 }, 40);
             }
-        }
-    });
-
-    regexContainer.addEventListener('change', (e) => {
-        if (e.target.closest('#bb_regex_toolbar')) return;
-        const target = e.target;
-        if (target.classList.contains('bb-batch-chk')) {
-            const id = target.dataset.id;
-            if (target.checked) {
-                rState.selectedItems.set(id, { origin: target.dataset.origin, storeScope: target.dataset.scope });
-            } else {
-                rState.selectedItems.delete(id);
-            }
-            renderBatchDrawer();
         }
     });
 }

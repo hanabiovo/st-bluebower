@@ -22,6 +22,7 @@ const pState = {
     query: '',
     batchMode: false,
     selectedIds: new Set(),
+    lastBatchId: null,
     starredCollapsed: false,
     presetData: null,
     searchTimer: null,
@@ -148,7 +149,10 @@ function bindTopbarEvents(topbar) {
 
     topbar.querySelector('.bb-batch-btn').addEventListener('click', () => {
         pState.batchMode = !pState.batchMode;
-        if (!pState.batchMode) pState.selectedIds.clear();
+        if (!pState.batchMode) {
+            pState.selectedIds.clear();
+            pState.lastBatchId = null;
+        }
         scheduleEnhancePromptList();
     });
 
@@ -272,7 +276,7 @@ function renderBatchDrawer() {
     ].join('');
     el.classList.add('is-open');
     el.innerHTML = `
-        <span class="bb-batch-count">已选 <strong>${pState.selectedIds.size}</strong> 项</span>
+        <span class="bb-batch-count" title="直接点击下方条目即可选中（支持 Shift 连选）">已选 <strong>${pState.selectedIds.size}</strong> 项</span>
         <select class="bb-batch-target text_pole">${options}</select>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn bb-btn-primary" data-batch-action="apply" ${pState.selectedIds.size ? '' : 'disabled'}>移动</button>
         <button type="button" class="menu_button bb-btn-sm bb-drawer-btn" data-batch-action="select-all">全选</button>
@@ -310,6 +314,7 @@ function enhancePromptList() {
     const topbarLi = ensureTopbarLi();
     const locked = Boolean(pState.presetData.settings?.lockPromptOrder ?? true);
     applyLockOrderState(listEl, locked);
+    listEl.classList.toggle('bb-batch-mode', pState.batchMode);
 
     const nativeItems = Array.from(listEl.children).filter(el => el.classList.contains('completion_prompt_manager_prompt'));
 
@@ -366,6 +371,7 @@ function enhancePromptList() {
                     || (group?.name || '').toLowerCase().includes(pState.query));
 
             li.classList.toggle('bb-filter-hidden', !matchFilter);
+            li.classList.toggle('bb-batch-selected', pState.batchMode && pState.selectedIds.has(id));
             li.classList.remove('bb-collapsed-hidden', 'bb-grouped-child');
 
             decoratePromptItem(li, id, meta, group, locked);
@@ -520,7 +526,6 @@ function decoratePromptItem(li, id, meta, group, locked) {
 
     const hasMetaIndicator = Boolean(meta?.starred || meta?.note);
     extras.innerHTML = `
-        ${pState.batchMode ? `<input type="checkbox" class="bb-batch-chk" data-id="${esc(id)}" ${pState.selectedIds.has(id) ? 'checked' : ''} />` : ''}
         <button type="button" class="bb-icon-action bb-more-btn ${hasMetaIndicator ? 'has-meta' : ''}" data-bb-item-act="more" data-id="${esc(id)}" title="更多操作"><i class="fa-solid fa-ellipsis"></i></button>
     `;
 
@@ -579,6 +584,44 @@ function bindListIfNeeded(listEl) {
                 .forEach((li, i) => { li.dataset.bbOrigIdx = String(i); });
         });
     }
+
+    // Capture-phase row click in batchMode: click anywhere on the item row to toggle selection!
+    listEl.addEventListener('click', (e) => {
+        if (!pState.batchMode) return;
+        const li = e.target.closest('.completion_prompt_manager_prompt');
+        if (!li || !li.dataset.pmIdentifier) return;
+        // Still allow clicking controls if user explicitly clicked toggle/edit? No, clicking the row itself selects cleanly!
+        e.preventDefault();
+        e.stopPropagation();
+
+        const id = li.dataset.pmIdentifier;
+        const nextSelected = !pState.selectedIds.has(id);
+
+        if (e.shiftKey && pState.lastBatchId && pState.lastBatchId !== id) {
+            const visibleLis = Array.from(listEl.querySelectorAll('.completion_prompt_manager_prompt:not(.bb-collapsed-hidden):not(.bb-filter-hidden)'));
+            const i1 = visibleLis.findIndex(el => el.dataset.pmIdentifier === pState.lastBatchId);
+            const i2 = visibleLis.findIndex(el => el.dataset.pmIdentifier === id);
+            if (i1 !== -1 && i2 !== -1) {
+                const [start, end] = i1 < i2 ? [i1, i2] : [i2, i1];
+                for (let i = start; i <= end; i++) {
+                    const rowId = visibleLis[i].dataset.pmIdentifier;
+                    if (!rowId) continue;
+                    if (nextSelected) pState.selectedIds.add(rowId);
+                    else pState.selectedIds.delete(rowId);
+                    visibleLis[i].classList.toggle('bb-batch-selected', nextSelected);
+                }
+                pState.lastBatchId = id;
+                renderBatchDrawer();
+                return;
+            }
+        }
+
+        if (nextSelected) pState.selectedIds.add(id);
+        else pState.selectedIds.delete(id);
+        li.classList.toggle('bb-batch-selected', nextSelected);
+        pState.lastBatchId = id;
+        renderBatchDrawer();
+    }, true);
 
     listEl.addEventListener('click', async (e) => {
         if (e.target.closest('#bb_prompt_topbar')) return;
@@ -724,17 +767,6 @@ function bindListIfNeeded(listEl) {
                     }, 30);
                 }
             }
-        }
-    });
-
-    listEl.addEventListener('change', (e) => {
-        if (e.target.closest('#bb_prompt_topbar')) return;
-        const target = e.target;
-        if (target.classList.contains('bb-batch-chk')) {
-            const id = target.dataset.id;
-            if (target.checked) pState.selectedIds.add(id);
-            else pState.selectedIds.delete(id);
-            renderBatchDrawer();
         }
     });
 

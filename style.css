@@ -43,10 +43,36 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     cursor: default !important;
 }
 
-/* Hide native detach button (folded into Bluebower `...` menu) & empty spacer spans */
+/* Hide native detach button (folded into Bluebower `...` menu) & ONLY true placeholder <span class="fa-solid"></span> */
 #completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .prompt-manager-detach-action,
-#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .prompt_manager_prompt_controls > span.fa-solid:empty {
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .prompt_manager_prompt_controls > span[class="fa-solid"] {
     display: none !important;
+}
+
+/* Row-click batch multi-select highlight (no checkboxes needed) */
+#completion_prompt_manager #completion_prompt_manager_list.bb-batch-mode li.completion_prompt_manager_prompt,
+#regex_container .bb-batch-mode .regex-script-label {
+    cursor: pointer !important;
+    user-select: none !important;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.bb-batch-mode li.completion_prompt_manager_prompt * ,
+#regex_container .bb-batch-mode .regex-script-label * {
+    pointer-events: none !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.bb-batch-mode li.completion_prompt_manager_prompt:hover,
+#regex_container .bb-batch-mode .regex-script-label:hover {
+    border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 55%, transparent) !important;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 10%, transparent) !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt.bb-batch-selected,
+#regex_container .regex-script-label.bb-batch-selected {
+    border-color: var(--SmartThemeQuoteColor, #3b82f6) !important;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 22%, transparent) !important;
+    box-shadow: inset 3px 0 0 var(--SmartThemeQuoteColor, #3b82f6);
 }
 
 #completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt {

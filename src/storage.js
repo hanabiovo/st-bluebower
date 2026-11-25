@@ -30,6 +30,7 @@ export function makeId() {
 export function createEmptyGroupStore() {
     return {
         version: SCHEMA_VERSION,
+        defaultCollapsed: true,
         groups: [],
         items: {},
     };
@@ -93,6 +94,7 @@ export function normalizeGroupStore(store) {
     if (!store || typeof store !== 'object') return createEmptyGroupStore();
     if (!Array.isArray(store.groups)) store.groups = [];
     if (!store.items || typeof store.items !== 'object') store.items = {};
+    if (typeof store.defaultCollapsed !== 'boolean') store.defaultCollapsed = true;
     store.version = SCHEMA_VERSION;
 
     store.groups = store.groups
