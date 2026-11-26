@@ -8,7 +8,7 @@ import {
     savePresetData,
     savePresetDataDebounced,
 } from './storage.js';
-import { batchSetPromptsEnabled } from './st-bridge.js';
+import { batchSetPromptsEnabled, isPromptEnabled, syncPromptOrderFromIds } from './st-bridge.js';
 
 const CONTEXT_MARKER_IDS = new Set([
     'chatHistory',
@@ -41,7 +41,50 @@ const pState = {
     noticeTimer: null,
     fallbackTokenCache: new Map(),
     fallbackCalcToken: 0,
+    globalListenersBound: false,
+    dragState: null,
+    suppressClickUntil: 0,
 };
+
+function enforcePromptGroupExclusivity(gid, listEl, preferKeepId = null) {
+    if (!gid || !pState.presetData) return;
+    const store = pState.presetData.promptGroups;
+    const group = store?.groups?.find(g => g.id === gid);
+    if (!group?.exclusive) return;
+
+    const orderedMemberIds = [];
+    const seen = new Set();
+    const domEnabledMap = new Map();
+    if (listEl) {
+        for (const li of listEl.querySelectorAll('.completion_prompt_manager_prompt')) {
+            const id = li.dataset.pmIdentifier;
+            if (id) {
+                domEnabledMap.set(id, !li.classList.contains('completion_prompt_manager_prompt_disabled'));
+                if (store.items[id]?.groupId === gid && !seen.has(id)) {
+                    seen.add(id);
+                    orderedMemberIds.push(id);
+                }
+            }
+        }
+    }
+    for (const [id, meta] of Object.entries(store.items)) {
+        if (meta?.groupId === gid && !seen.has(id)) {
+            seen.add(id);
+            orderedMemberIds.push(id);
+        }
+    }
+
+    const enabledIds = orderedMemberIds.filter(id => (domEnabledMap.has(id) ? domEnabledMap.get(id) : isPromptEnabled(id)));
+    if (enabledIds.length <= 1) return;
+
+    const keepId = (preferKeepId && enabledIds.includes(preferKeepId)) ? preferKeepId : enabledIds[0];
+    const updates = enabledIds
+        .filter(id => id !== keepId)
+        .map(id => ({ id, enabled: false }));
+    if (updates.length) {
+        batchSetPromptsEnabled(updates);
+    }
+}
 
 function isContextMarkerItem(li, id) {
     return li.classList.contains('completion_prompt_manager_marker') || CONTEXT_MARKER_IDS.has(id);
@@ -240,6 +283,9 @@ function bindTopbarEvents(topbar) {
                 if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
                 store.items[id].groupId = targetGid;
             }
+            if (targetGid) {
+                enforcePromptGroupExclusivity(targetGid, getListEl());
+            }
             pState.selectedIds.clear();
             pState.lastBatchId = null;
             pState.batchMode = false;
@@ -311,13 +357,15 @@ function applyLockOrderState(listEl, locked) {
     listEl.classList.toggle('bb-order-locked', locked);
     // CRITICAL: Never use sortable('disable') because jQuery UI adds `.ui-state-disabled`
     // which sets `pointer-events: none` on the entire list in jquery-ui.min.css, breaking mobile taps!
+    // Also keep sortable items empty at all times because Bluebower provides its own 60fps pointer drag
+    // in unlocked mode without jQuery UI / touch-punch delays or stale item caches.
     listEl.classList.remove('ui-state-disabled', 'ui-sortable-disabled');
     const $ = window.jQuery;
     if ($ && typeof $(listEl).sortable === 'function') {
         try {
             if ($(listEl).sortable('instance') || $(listEl).data('ui-sortable')) {
                 $(listEl).sortable('option', 'disabled', false);
-                $(listEl).sortable('option', 'items', locked ? '.bb-no-drag-items' : '.completion_prompt_manager_prompt_draggable');
+                $(listEl).sortable('option', 'items', '.bb-no-drag-items');
             }
         } catch {
             // Ignore if sortable is not initialized yet
@@ -490,7 +538,7 @@ function enhancePromptList() {
 
             li.classList.toggle('bb-filter-hidden', !matchFilter);
             li.classList.toggle('bb-batch-selected', pState.batchMode && pState.selectedIds.has(id));
-            li.classList.remove('bb-collapsed-hidden', 'bb-grouped-child');
+            li.classList.remove('bb-collapsed-hidden', 'bb-grouped-child', 'completion_prompt_manager_prompt_draggable');
             delete li.dataset.bbMemberOf;
 
             decoratePromptItem(li, id, meta, group, locked);
@@ -853,6 +901,9 @@ function bindListIfNeeded(listEl) {
                         group.name = res.name;
                         group.note = res.note;
                         group.exclusive = res.exclusive;
+                        if (group.exclusive) {
+                            enforcePromptGroupExclusivity(gid, listEl);
+                        }
                         savePresetDataDebounced(pState.presetData);
                         scheduleEnhancePromptList();
                     }
@@ -925,6 +976,9 @@ function bindListIfNeeded(listEl) {
                     if (res !== null) {
                         store.items[id].note = res.note;
                         store.items[id].groupId = res.groupId;
+                        if (res.groupId) {
+                            enforcePromptGroupExclusivity(res.groupId, listEl, id);
+                        }
                         savePresetDataDebounced(pState.presetData);
                         scheduleEnhancePromptList();
                     }
@@ -934,40 +988,321 @@ function bindListIfNeeded(listEl) {
             });
             return;
         }
-
-        const nativeToggle = e.target.closest('.prompt-manager-toggle-action');
-        if (nativeToggle) {
-            const li = nativeToggle.closest('.completion_prompt_manager_prompt');
-            const id = li?.dataset?.pmIdentifier;
-            if (!id) return;
-            const wasDisabled = li.classList.contains('completion_prompt_manager_prompt_disabled');
-            if (wasDisabled) {
-                const store = pState.presetData.promptGroups;
-                const gid = store.items[id]?.groupId;
-                const group = gid ? store.groups.find(g => g.id === gid) : null;
-                if (group?.exclusive) {
-                    setTimeout(() => {
-                        const siblings = Array.from(listEl.querySelectorAll('.completion_prompt_manager_prompt'))
-                            .map(el => el.dataset.pmIdentifier)
-                            .filter(sid => sid && sid !== id && store.items[sid]?.groupId === gid);
-                        if (siblings.length) {
-                            batchSetPromptsEnabled(siblings.map(sid => ({ id: sid, enabled: false })));
-                            scheduleEnhancePromptList();
-                        }
-                    }, 30);
-                }
-            }
-        }
     });
 
     const observer = new MutationObserver(() => {
+        if (pState.dragState?.active) return;
         scheduleEnhancePromptList();
     });
     pState.listObserver = observer;
     observer.observe(listEl, { childList: true });
 }
 
+function findScrollContainer(el) {
+    let cur = el?.parentElement;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+        const style = window.getComputedStyle(cur);
+        const oy = style.overflowY;
+        if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && cur.scrollHeight > cur.clientHeight) {
+            return cur;
+        }
+        cur = cur.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+}
+
+function repositionDraggedRow(ds) {
+    const { listEl, dragLi, clientY } = ds;
+    if (!listEl?.isConnected || !dragLi?.isConnected) return;
+
+    const siblings = Array.from(listEl.children).filter(
+        el => el !== dragLi
+            && el.classList.contains('completion_prompt_manager_prompt')
+            && !el.classList.contains('bb-filter-hidden'),
+    );
+    if (!siblings.length) return;
+
+    let refNode = null;
+    for (const sib of siblings) {
+        const rect = sib.getBoundingClientRect();
+        if (clientY < rect.top + rect.height * 0.5) {
+            refNode = sib;
+            break;
+        }
+    }
+
+    if (refNode) {
+        if (dragLi.nextElementSibling !== refNode) {
+            listEl.insertBefore(dragLi, refNode);
+            ds.reordered = true;
+        }
+    } else {
+        const lastSib = siblings[siblings.length - 1];
+        const afterLast = lastSib.nextSibling;
+        if (dragLi.previousElementSibling !== lastSib) {
+            listEl.insertBefore(dragLi, afterLast);
+            ds.reordered = true;
+        }
+    }
+}
+
+function bindGlobalPromptListenersOnce() {
+    if (pState.globalListenersBound) return;
+    pState.globalListenersBound = true;
+
+    const activateDrag = (ds) => {
+        if (ds.active) return;
+        ds.active = true;
+        if (pState.rafId) {
+            cancelAnimationFrame(pState.rafId);
+            pState.rafId = null;
+        }
+        pState.listObserver?.disconnect();
+        ds.listEl.classList.add('bb-dragging-list');
+        ds.dragLi.classList.add('bb-dragging-row');
+        if (typeof ds.listEl.setPointerCapture === 'function' && ds.pointerId !== null) {
+            try {
+                ds.listEl.setPointerCapture(ds.pointerId);
+            } catch {
+                // Ignore if pointer capture is unavailable
+            }
+        }
+        const tickAutoScroll = () => {
+            if (pState.dragState !== ds || !ds.active) return;
+            const sc = ds.scrollEl;
+            if (sc) {
+                const isRoot = sc === document.scrollingElement || sc === document.documentElement;
+                const rect = isRoot ? { top: 0, bottom: window.innerHeight } : sc.getBoundingClientRect();
+                const visTop = Math.max(0, rect.top);
+                const visBottom = Math.min(window.innerHeight, rect.bottom);
+                const edgeZone = 52;
+                const maxSpeed = 14;
+                let delta = 0;
+                if (ds.clientY < visTop + edgeZone) {
+                    const ratio = Math.min(1, Math.max(0.15, (visTop + edgeZone - ds.clientY) / edgeZone));
+                    delta = -Math.ceil(ratio * maxSpeed);
+                } else if (ds.clientY > visBottom - edgeZone) {
+                    const ratio = Math.min(1, Math.max(0.15, (ds.clientY - (visBottom - edgeZone)) / edgeZone));
+                    delta = Math.ceil(ratio * maxSpeed);
+                }
+                if (delta !== 0) {
+                    if (isRoot) {
+                        const prev = window.scrollY;
+                        window.scrollBy(0, delta);
+                        if (window.scrollY !== prev) repositionDraggedRow(ds);
+                    } else {
+                        const prev = sc.scrollTop;
+                        sc.scrollTop += delta;
+                        if (sc.scrollTop !== prev) repositionDraggedRow(ds);
+                    }
+                }
+            }
+            ds.scrollRaf = requestAnimationFrame(tickAutoScroll);
+        };
+        ds.scrollRaf = requestAnimationFrame(tickAutoScroll);
+    };
+
+    const finishDrag = (cancelled = false) => {
+        const ds = pState.dragState;
+        if (!ds) return;
+        pState.dragState = null;
+
+        if (ds.scrollRaf) cancelAnimationFrame(ds.scrollRaf);
+        if (typeof ds.listEl?.releasePointerCapture === 'function' && ds.pointerId !== null) {
+            try {
+                ds.listEl.releasePointerCapture(ds.pointerId);
+            } catch {
+                // Ignore
+            }
+        }
+
+        ds.dragLi?.classList.remove('bb-dragging-row');
+        ds.listEl?.classList.remove('bb-dragging-list');
+
+        if (ds.active) {
+            pState.suppressClickUntil = Date.now() + 260;
+            if (!cancelled && ds.reordered && ds.listEl?.isConnected) {
+                const promptLis = Array.from(ds.listEl.children).filter(
+                    el => el.classList.contains('completion_prompt_manager_prompt'),
+                );
+                promptLis.forEach((li, idx) => {
+                    li.dataset.bbOrigIdx = String(idx);
+                });
+                const orderedIds = promptLis.map(li => li.dataset.pmIdentifier).filter(Boolean);
+                syncPromptOrderFromIds(orderedIds);
+            } else if (cancelled && ds.listEl?.isConnected && Array.isArray(ds.initialOrder)) {
+                for (const el of ds.initialOrder) {
+                    if (el.parentElement === ds.listEl) ds.listEl.appendChild(el);
+                }
+            }
+            if (ds.listEl?.isConnected && pState.boundListEl === ds.listEl) {
+                pState.listObserver?.observe(ds.listEl, { childList: true });
+            }
+        }
+    };
+
+    // 1. Window capture click handler: runs BEFORE ST-BaiBai-Tools (`document` capture) and `PromptManager.handleToggle`,
+    //    guaranteeing true radio-button behavior on `exclusive` groups (activate -> disable siblings; deactivate -> only self).
+    window.addEventListener('click', (e) => {
+        if (Date.now() < pState.suppressClickUntil && e.target instanceof Element && e.target.closest('#completion_prompt_manager_list')) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            return;
+        }
+        if (pState.batchMode) return;
+
+        const toggleEl = e.target instanceof Element
+            ? e.target.closest('#completion_prompt_manager_list .prompt-manager-toggle-action')
+            : null;
+        if (!toggleEl) return;
+
+        const li = toggleEl.closest('li.completion_prompt_manager_prompt');
+        const id = li?.dataset?.pmIdentifier;
+        const listEl = li?.parentElement;
+        if (!id || !listEl) return;
+
+        if (!pState.presetData) loadCurrentPresetState();
+        const store = pState.presetData?.promptGroups;
+        const gid = store?.items?.[id]?.groupId;
+        const group = gid ? store.groups.find(g => g.id === gid) : null;
+
+        if (!group?.exclusive) {
+            requestAnimationFrame(() => scheduleEnhancePromptList());
+            return;
+        }
+
+        const wasEnabled = !li.classList.contains('completion_prompt_manager_prompt_disabled');
+        const nextEnabled = !wasEnabled;
+
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        if (nextEnabled) {
+            const siblingIds = new Set();
+            for (const el of listEl.querySelectorAll('li.completion_prompt_manager_prompt')) {
+                const sid = el.dataset.pmIdentifier;
+                if (sid && sid !== id && store.items[sid]?.groupId === gid) {
+                    siblingIds.add(sid);
+                }
+            }
+            for (const [sid, meta] of Object.entries(store.items)) {
+                if (sid !== id && meta?.groupId === gid) {
+                    siblingIds.add(sid);
+                }
+            }
+            const updates = [
+                { id, enabled: true },
+                ...Array.from(siblingIds).map(sid => ({ id: sid, enabled: false })),
+            ];
+            batchSetPromptsEnabled(updates);
+        } else {
+            batchSetPromptsEnabled([{ id, enabled: false }]);
+        }
+
+        scheduleEnhancePromptList();
+    }, true);
+
+    // 2. Window capture Pointer Drag for unlocked original-order mode (`!locked`)
+    window.addEventListener('pointerdown', (e) => {
+        if (pState.batchMode || pState.dragState) return;
+        if (e.isPrimary === false || (e.pointerType === 'mouse' && e.button !== 0)) return;
+        if (!(e.target instanceof Element)) return;
+
+        const listEl = document.getElementById('completion_prompt_manager_list');
+        if (!listEl || listEl.classList.contains('bb-order-locked') || pState.presetData?.settings?.lockPromptOrder) return;
+
+        const handleEl = e.target.closest('#completion_prompt_manager_list .drag-handle');
+        if (e.pointerType !== 'mouse' && !handleEl) return;
+
+        const dragLi = (handleEl || e.target).closest('#completion_prompt_manager_list > li.completion_prompt_manager_prompt');
+        if (!dragLi || !dragLi.dataset.pmIdentifier) return;
+
+        if (!handleEl && e.target.closest('a, button, input, select, textarea, .prompt_manager_prompt_controls, .bb-item-extras, .prompt-manager-inspect-action')) {
+            return;
+        }
+
+        const ds = {
+            pointerId: e.pointerId,
+            listEl,
+            dragLi,
+            scrollEl: findScrollContainer(listEl),
+            startX: e.clientX,
+            startY: e.clientY,
+            clientY: e.clientY,
+            active: false,
+            reordered: false,
+            scrollRaf: 0,
+            initialOrder: Array.from(listEl.children),
+        };
+        pState.dragState = ds;
+
+        if (handleEl) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            activateDrag(ds);
+        }
+    }, true);
+
+    window.addEventListener('pointermove', (e) => {
+        const ds = pState.dragState;
+        if (!ds || e.pointerId !== ds.pointerId) return;
+        ds.clientY = e.clientY;
+
+        if (!ds.active) {
+            if (Math.hypot(e.clientX - ds.startX, e.clientY - ds.startY) < 5) return;
+            activateDrag(ds);
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        repositionDraggedRow(ds);
+    }, true);
+
+    window.addEventListener('pointerup', (e) => {
+        const ds = pState.dragState;
+        if (!ds || e.pointerId !== ds.pointerId) return;
+        if (ds.active) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        finishDrag(false);
+    }, true);
+
+    window.addEventListener('pointercancel', (e) => {
+        const ds = pState.dragState;
+        if (!ds || e.pointerId !== ds.pointerId) return;
+        finishDrag(true);
+    }, true);
+
+    // Prevent mobile WebView scroll hijacking when touching `.drag-handle` or actively dragging
+    window.addEventListener('touchstart', (e) => {
+        if (pState.batchMode || !(e.target instanceof Element)) return;
+        const handleEl = e.target.closest('#completion_prompt_manager_list:not(.bb-order-locked) .drag-handle');
+        if (!handleEl) return;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+    }, { capture: true, passive: false });
+
+    window.addEventListener('touchmove', (e) => {
+        if (!pState.dragState?.active) return;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+    }, { capture: true, passive: false });
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && pState.dragState?.active) {
+            e.preventDefault();
+            finishDrag(true);
+        }
+    }, true);
+}
+
 export function initPromptEnhancer() {
+    bindGlobalPromptListenersOnce();
     const container = document.getElementById('completion_prompt_manager');
     if (!container) return;
     if (!pState.initialized) {

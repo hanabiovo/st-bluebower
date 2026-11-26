@@ -65,10 +65,15 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     display: none !important;
 }
 
-/* Lock drag handles when prompt order is locked (high specificity for mobile & older ST versions) */
+/* Lock drag handles when prompt order is locked or in batch mode (high specificity for mobile & older ST versions) */
 #completion_prompt_manager #completion_prompt_manager_list.bb-order-locked li.completion_prompt_manager_prompt .drag-handle,
-#completion_prompt_manager #completion_prompt_manager_list.bb-order-locked li.completion_prompt_manager_prompt .ui-sortable-handle {
+#completion_prompt_manager #completion_prompt_manager_list.bb-order-locked li.completion_prompt_manager_prompt .ui-sortable-handle,
+#completion_prompt_manager #completion_prompt_manager_list.bb-batch-mode li.completion_prompt_manager_prompt .drag-handle {
     display: none !important;
+}
+
+#regex_container .regex-script-label .drag-handle {
+    touch-action: none;
 }
 
 /* Hide native detach button (folded into Bluebower `...` menu) & ONLY true placeholder <span class="fa-solid"></span> */
@@ -119,11 +124,46 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     border-radius: 7px;
 }
 
-#completion_prompt_manager #completion_prompt_manager_list:not(.bb-order-locked) li.completion_prompt_manager_prompt .drag-handle {
+/* Force drag-handle visible & touch-capturable in unlocked original-order mode
+   (overrides SillyTavern's `.drag-handle:not(.ui-sortable-handle) { display: none }` and prevents mobile scroll hijacking) */
+#completion_prompt_manager #completion_prompt_manager_list:not(.bb-order-locked):not(.bb-batch-mode) li.completion_prompt_manager_prompt .drag-handle {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     position: static !important;
-    height: auto !important;
-    padding: 0 2px 0 0 !important;
+    min-width: 26px !important;
+    height: 28px !important;
+    padding: 0 6px 0 2px !important;
+    margin: -4px 0 -4px -2px !important;
     flex: 0 0 auto !important;
+    cursor: grab !important;
+    touch-action: none !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -webkit-touch-callout: none !important;
+    opacity: 0.78 !important;
+    font-size: 1.05em !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.bb-dragging-list,
+#completion_prompt_manager #completion_prompt_manager_list.bb-dragging-list * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt.bb-dragging-row {
+    opacity: 0.95 !important;
+    border-color: var(--SmartThemeQuoteColor, #3b82f6) !important;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 20%, var(--SmartThemeBlurTintColor, #1c1e24)) !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.38) !important;
+    position: relative !important;
+    z-index: 15 !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt.bb-dragging-row .drag-handle {
+    cursor: grabbing !important;
+    opacity: 1 !important;
+    color: var(--SmartThemeQuoteColor, #3b82f6) !important;
 }
 
 #completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {

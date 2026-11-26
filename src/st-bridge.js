@@ -94,6 +94,22 @@ export function getPromptItems() {
 }
 
 /**
+ * Checks whether a prompt entry is currently enabled in `prompt_order` (with DOM fallback).
+ * @param {string} identifier
+ * @returns {boolean}
+ */
+export function isPromptEnabled(identifier) {
+    const orderContainer = getActivePromptOrderEntry();
+    if (orderContainer && Array.isArray(orderContainer.order)) {
+        const entry = orderContainer.order.find(e => String(e?.identifier) === String(identifier));
+        if (entry) return Boolean(entry.enabled);
+    }
+    const row = document.querySelector(`#completion_prompt_manager_list .completion_prompt_manager_prompt[data-pm-identifier="${CSS.escape(identifier)}"]`);
+    if (row) return !row.classList.contains('completion_prompt_manager_prompt_disabled');
+    return false;
+}
+
+/**
  * Toggles a prompt entry's enabled state and syncs native DOM if visible.
  * @param {string} identifier
  * @param {boolean} enabled
@@ -129,6 +145,54 @@ export function batchSetPromptsEnabled(updates) {
         setPromptEnabled(item.id, item.enabled, { save: false });
     }
     ctx?.saveSettingsDebounced?.();
+}
+
+/**
+ * Persists a new `prompt_order` sequence from an ordered array of prompt identifiers,
+ * preserving each entry's `enabled` state and keeping any unrendered tail entries intact.
+ * @param {string[]} orderedIds
+ * @returns {boolean}
+ */
+export function syncPromptOrderFromIds(orderedIds) {
+    const ctx = window.SillyTavern?.getContext?.();
+    const orderContainer = getActivePromptOrderEntry();
+    if (!orderContainer || !Array.isArray(orderContainer.order) || !Array.isArray(orderedIds) || !orderedIds.length) {
+        return false;
+    }
+
+    const existingMap = new Map();
+    for (const entry of orderContainer.order) {
+        if (entry && entry.identifier !== undefined && entry.identifier !== null) {
+            existingMap.set(String(entry.identifier), entry);
+        }
+    }
+
+    const seen = new Set();
+    const nextOrder = [];
+    for (const rawId of orderedIds) {
+        const id = String(rawId ?? '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const existing = existingMap.get(id);
+        if (existing) {
+            nextOrder.push(existing);
+        } else {
+            const row = document.querySelector(`#completion_prompt_manager_list .completion_prompt_manager_prompt[data-pm-identifier="${CSS.escape(id)}"]`);
+            const enabled = row ? !row.classList.contains('completion_prompt_manager_prompt_disabled') : true;
+            nextOrder.push({ identifier: id, enabled });
+        }
+    }
+
+    for (const entry of orderContainer.order) {
+        const id = String(entry?.identifier ?? '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        nextOrder.push(entry);
+    }
+
+    orderContainer.order.splice(0, orderContainer.order.length, ...nextOrder);
+    ctx?.saveSettingsDebounced?.();
+    return true;
 }
 
 /**

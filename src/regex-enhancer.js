@@ -32,7 +32,35 @@ const rState = {
     presetData: null,
     searchTimer: null,
     noticeTimer: null,
+    globalListenersBound: false,
 };
+
+async function enforceRegexGroupExclusivity(storeScope, origin, gid, preferKeepId = null) {
+    if (!gid) return;
+    const store = getStore(storeScope);
+    const group = store?.groups?.find(g => g.id === gid);
+    if (!group?.exclusive) return;
+
+    const listEl = document.getElementById(CONTAINERS.find(c => c.origin === origin)?.id || '');
+    if (!listEl) return;
+
+    const memberRows = Array.from(listEl.querySelectorAll('.regex-script-label'))
+        .filter(row => row.id && store.items[row.id]?.groupId === gid);
+    const enabledRows = memberRows.filter(r => !r.querySelector('.disable_regex')?.checked);
+    if (enabledRows.length <= 1) return;
+
+    const keepId = (preferKeepId && enabledRows.some(r => r.id === preferKeepId))
+        ? preferKeepId
+        : enabledRows[0].id;
+    const toDisable = enabledRows.filter(r => r.id !== keepId);
+    if (!toDisable.length) return;
+
+    for (const r of toDisable) {
+        const chk = r.querySelector('.disable_regex');
+        if (chk) chk.checked = true;
+    }
+    await batchSetRegexEnabled(toDisable.map(r => ({ id: r.id, origin, enabled: false })));
+}
 
 function esc(str) {
     return String(str ?? '')
@@ -262,6 +290,10 @@ function bindRegexToolbarEvents(toolbar) {
             for (const id of rState.selectedItems.keys()) {
                 if (!store.items[id]) store.items[id] = { groupId: null, starred: false, note: '' };
                 store.items[id].groupId = targetGid;
+            }
+            if (targetGid) {
+                const origin = CONTAINERS.find(c => c.storeScope === itemScope)?.origin;
+                if (origin) await enforceRegexGroupExclusivity(itemScope, origin, targetGid);
             }
 
             rState.selectedItems.clear();
@@ -849,6 +881,9 @@ function bindRegexContainerIfNeeded(regexContainer) {
                         group.name = res.name;
                         group.note = res.note;
                         group.exclusive = res.exclusive;
+                        if (group.exclusive) {
+                            await enforceRegexGroupExclusivity(storeScope, origin, gid);
+                        }
                         persistStore(storeScope);
                         scheduleEnhanceRegexLists();
                     }
@@ -898,44 +933,91 @@ function bindRegexContainerIfNeeded(regexContainer) {
                 if (res !== null) {
                     store.items[id].note = res.note;
                     store.items[id].groupId = res.groupId;
+                    if (res.groupId) {
+                        const origin = CONTAINERS.find(c => c.storeScope === storeScope)?.origin;
+                        if (origin) await enforceRegexGroupExclusivity(storeScope, origin, res.groupId, id);
+                    }
                     await persistStore(storeScope);
                     scheduleEnhanceRegexLists();
                 }
             }
             return;
         }
-
-        if (e.target.closest('.regex-toggle-off')) {
-            const row = e.target.closest('.regex-script-label');
-            const listEl = row?.parentElement;
-            const cfg = CONTAINERS.find(c => c.id === listEl?.id);
-            if (!row || !cfg) return;
-            const store = getStore(cfg.storeScope);
-            const gid = store.items[row.id]?.groupId;
-            const group = gid ? store.groups.find(g => g.id === gid) : null;
-            if (group?.exclusive) {
-                setTimeout(async () => {
-                    const siblings = Array.from(listEl.querySelectorAll('.regex-script-label'))
-                        .filter(el => el.id && el.id !== row.id && store.items[el.id]?.groupId === gid);
-                    if (siblings.length) {
-                        await batchSetRegexEnabled(siblings.map(el => ({
-                            id: el.id,
-                            origin: cfg.origin,
-                            enabled: false,
-                        })));
-                        siblings.forEach(el => {
-                            const chk = el.querySelector('.disable_regex');
-                            if (chk) chk.checked = true;
-                        });
-                        scheduleEnhanceRegexLists();
-                    }
-                }, 40);
-            }
-        }
     });
 }
 
+function bindGlobalRegexListenersOnce() {
+    if (rState.globalListenersBound) return;
+    rState.globalListenersBound = true;
+
+    window.addEventListener('click', async (e) => {
+        if (rState.batchMode) return;
+        const toggleTarget = e.target instanceof Element
+            ? e.target.closest('#regex_container .regex-toggle-on, #regex_container .regex-toggle-off, #regex_container input.disable_regex')
+            : null;
+        if (!toggleTarget) return;
+
+        const row = toggleTarget.closest('.regex-script-label');
+        const listEl = row?.parentElement;
+        const cfg = CONTAINERS.find(c => c.id === listEl?.id);
+        if (!row?.id || !cfg) return;
+
+        const store = getStore(cfg.storeScope);
+        const gid = store.items[row.id]?.groupId;
+        const group = gid ? store.groups.find(g => g.id === gid) : null;
+
+        if (!group?.exclusive) {
+            setTimeout(() => scheduleEnhanceRegexLists(), 20);
+            return;
+        }
+
+        const chk = row.querySelector('.disable_regex');
+        const wasEnabled = chk ? !chk.checked : true;
+        let nextEnabled = !wasEnabled;
+        if (toggleTarget.classList.contains('regex-toggle-on')) {
+            nextEnabled = false;
+        } else if (toggleTarget.classList.contains('regex-toggle-off')) {
+            nextEnabled = true;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        let updates;
+        if (nextEnabled) {
+            const siblingIds = new Set();
+            for (const el of listEl.querySelectorAll('.regex-script-label')) {
+                if (el.id && el.id !== row.id && store.items[el.id]?.groupId === gid) {
+                    siblingIds.add(el.id);
+                }
+            }
+            for (const [sid, meta] of Object.entries(store.items)) {
+                if (sid !== row.id && meta?.groupId === gid) {
+                    siblingIds.add(sid);
+                }
+            }
+            updates = [
+                { id: row.id, origin: cfg.origin, enabled: true },
+                ...Array.from(siblingIds).map(sid => ({ id: sid, origin: cfg.origin, enabled: false })),
+            ];
+        } else {
+            updates = [{ id: row.id, origin: cfg.origin, enabled: false }];
+        }
+
+        for (const u of updates) {
+            const targetRow = document.getElementById(u.id);
+            const targetChk = targetRow?.querySelector('.disable_regex');
+            if (targetChk) targetChk.checked = !u.enabled;
+        }
+
+        await batchSetRegexEnabled(updates);
+        scheduleEnhanceRegexLists();
+    }, true);
+}
+
 export function initRegexEnhancer() {
+    bindGlobalRegexListenersOnce();
     const regexContainer = document.getElementById('regex_container');
     if (!regexContainer) return;
     if (!rState.initialized) {
