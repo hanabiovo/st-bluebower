@@ -72,8 +72,51 @@ body.bb-preset-misc-collapsed #openai_settings > :not(:has(#completion_prompt_ma
     display: none !important;
 }
 
-#regex_container .regex-script-label .drag-handle {
-    touch-action: none;
+#regex_container .bb-batch-mode .regex-script-label .drag-handle {
+    display: none !important;
+}
+
+#regex_container :not(.bb-batch-mode) > .regex-script-label .drag-handle {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 26px !important;
+    height: 28px !important;
+    padding: 0 6px 0 2px !important;
+    margin: -3px 0 -3px -2px !important;
+    flex: 0 0 auto !important;
+    cursor: grab !important;
+    touch-action: none !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -webkit-touch-callout: none !important;
+    opacity: 0.78 !important;
+}
+
+#regex_container .bb-dragging-list,
+#regex_container .bb-dragging-list * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+#regex_container .regex-script-label.bb-dragging-row {
+    opacity: 0.95 !important;
+    border-color: var(--SmartThemeQuoteColor, #3b82f6) !important;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 20%, var(--SmartThemeBlurTintColor, #1c1e24)) !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.38) !important;
+    position: relative !important;
+    z-index: 15 !important;
+}
+
+#regex_container .regex-script-label.bb-dragging-row .drag-handle {
+    cursor: grabbing !important;
+    opacity: 1 !important;
+    color: var(--SmartThemeQuoteColor, #3b82f6) !important;
+}
+
+#regex_container .bb-regex-group-header.bb-drop-target-header {
+    border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 65%, transparent) !important;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #3b82f6) 14%, var(--SmartThemeBlurTintColor, transparent)) !important;
 }
 
 /* Hide native detach button (folded into Bluebower `...` menu) & ONLY true placeholder <span class="fa-solid"></span> */

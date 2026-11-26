@@ -341,6 +341,82 @@ export async function batchSetRegexEnabled(updates) {
 }
 
 /**
+ * Persists a new regex script array sequence for a given origin ('global' | 'scoped' | 'preset'),
+ * preserving all script properties and any unrendered scripts.
+ * @param {'global' | 'scoped' | 'preset'} origin
+ * @param {string[]} orderedIds
+ * @returns {Promise<boolean>}
+ */
+export async function syncRegexOrderFromIds(origin, orderedIds) {
+    const ctx = window.SillyTavern?.getContext?.();
+    if (!ctx || !Array.isArray(orderedIds) || !orderedIds.length) return false;
+
+    const reorderArray = (arr) => {
+        if (!Array.isArray(arr) || !arr.length) return null;
+        const map = new Map();
+        for (const s of arr) {
+            if (s && s.id !== undefined && s.id !== null) {
+                map.set(String(s.id), s);
+            }
+        }
+        const seen = new Set();
+        const next = [];
+        for (const rawId of orderedIds) {
+            const id = String(rawId ?? '');
+            if (!id || seen.has(id)) continue;
+            const item = map.get(id);
+            if (item) {
+                seen.add(id);
+                next.push(item);
+            }
+        }
+        for (const s of arr) {
+            const id = String(s?.id ?? '');
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            next.push(s);
+        }
+        return next;
+    };
+
+    if (origin === 'global' && Array.isArray(ctx.extensionSettings?.regex)) {
+        const next = reorderArray(ctx.extensionSettings.regex);
+        if (!next) return false;
+        ctx.extensionSettings.regex.splice(0, ctx.extensionSettings.regex.length, ...next);
+        ctx.saveSettingsDebounced?.();
+        return true;
+    }
+
+    if (origin === 'scoped' && ctx.characterId !== undefined && ctx.characterId !== null) {
+        const char = ctx.characters?.[ctx.characterId];
+        const liveArr = char?.data?.extensions?.regex_scripts;
+        const next = reorderArray(liveArr || []);
+        if (!next) return false;
+        if (Array.isArray(liveArr)) {
+            liveArr.splice(0, liveArr.length, ...next);
+        }
+        await ctx.writeExtensionField?.(ctx.characterId, 'regex_scripts', structuredClone(next));
+        ctx.saveSettingsDebounced?.();
+        return true;
+    }
+
+    if (origin === 'preset') {
+        const pm = ctx.getPresetManager?.();
+        const liveArr = pm?.readPresetExtensionField?.({ path: 'regex_scripts' });
+        const next = reorderArray(liveArr || []);
+        if (!next) return false;
+        if (Array.isArray(liveArr)) {
+            liveArr.splice(0, liveArr.length, ...next);
+        }
+        await pm?.writePresetExtensionField?.({ path: 'regex_scripts', value: structuredClone(next) });
+        ctx.saveSettingsDebounced?.();
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * Fast cached token estimator. Uses SillyTavern's async tokenizer when available,
  * with a lightweight heuristic fallback so UI rendering never blocks.
  * @param {string} text

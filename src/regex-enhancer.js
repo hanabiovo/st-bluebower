@@ -8,7 +8,7 @@ import {
     saveGlobalSettings,
     savePresetDataDebounced,
 } from './storage.js';
-import { batchSetRegexEnabled, getRegexScopeInfo } from './st-bridge.js';
+import { batchSetRegexEnabled, getRegexScopeInfo, syncRegexOrderFromIds } from './st-bridge.js';
 
 const CONTAINERS = [
     { id: 'saved_regex_scripts', origin: 'global', storeScope: 'global', label: '全局正则' },
@@ -33,6 +33,8 @@ const rState = {
     searchTimer: null,
     noticeTimer: null,
     globalListenersBound: false,
+    dragState: null,
+    suppressClickUntil: 0,
 };
 
 async function enforceRegexGroupExclusivity(storeScope, origin, gid, preferKeepId = null) {
@@ -382,6 +384,18 @@ function enhanceAllRegexLists() {
 
 function enhanceSingleRegexContainer(listEl, cfg) {
     listEl.classList.remove('ui-state-disabled', 'ui-sortable-disabled');
+    // Disable native jQuery UI sortable items so sortable / touch-punch never fights Bluebower's 60fps pointer drag
+    const $ = window.jQuery;
+    if ($ && typeof $(listEl).sortable === 'function') {
+        try {
+            if ($(listEl).sortable('instance') || $(listEl).data('ui-sortable')) {
+                $(listEl).sortable('option', 'disabled', false);
+                $(listEl).sortable('option', 'items', '.bb-no-drag-items');
+            }
+        } catch {
+            // Ignore if sortable is not initialized yet
+        }
+    }
     const nativeItems = Array.from(listEl.children).filter(el => el.classList.contains('regex-script-label'));
     listEl.querySelectorAll('.bb-group-header, .bb-group-note-li').forEach(el => el.remove());
 
@@ -643,6 +657,7 @@ function ensureListObservers() {
             nextObservers.push(existingMap.get(listEl));
         } else {
             const obs = new MutationObserver(() => {
+                if (rState.dragState?.active) return;
                 scheduleEnhanceRegexLists();
             });
             obs.observe(listEl, { childList: true });
@@ -664,6 +679,7 @@ function bindRegexContainerIfNeeded(regexContainer) {
 
     rState.rootObserver?.disconnect();
     rState.rootObserver = new MutationObserver(() => {
+        if (rState.dragState?.active) return;
         scheduleEnhanceRegexLists();
     });
     rState.rootObserver.observe(regexContainer, { childList: true });
@@ -946,11 +962,279 @@ function bindRegexContainerIfNeeded(regexContainer) {
     });
 }
 
+function findRegexScrollContainer(el) {
+    let cur = el?.parentElement;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+        const style = window.getComputedStyle(cur);
+        const oy = style.overflowY;
+        if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && cur.scrollHeight > cur.clientHeight) {
+            return cur;
+        }
+        cur = cur.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+}
+
+function findPrecedingGroupHeader(row) {
+    let prev = row?.previousElementSibling;
+    while (prev) {
+        if (prev.classList.contains('bb-regex-group-header')) return prev;
+        prev = prev.previousElementSibling;
+    }
+    return null;
+}
+
+function updateDropHeaderHighlight(listEl, activeHeader) {
+    if (!listEl) return;
+    for (const h of listEl.querySelectorAll('.bb-regex-group-header')) {
+        h.classList.toggle('bb-drop-target-header', h === activeHeader);
+    }
+}
+
+function repositionDraggedRegexRow(ds) {
+    const { listEl, dragRow, clientY } = ds;
+    if (!listEl?.isConnected || !dragRow?.isConnected) return;
+
+    const allChildren = Array.from(listEl.children);
+    const firstHeader = allChildren.find(el => el.classList.contains('bb-regex-group-header'));
+
+    // Collect visible candidates strictly after the first group header (and its group note)
+    // so a dragged script row always stays inside a valid group or `默认`.
+    let pastFirstHeaderAnchor = !firstHeader;
+    const candidates = [];
+    for (const el of allChildren) {
+        if (!pastFirstHeaderAnchor) {
+            if (el === firstHeader) {
+                pastFirstHeaderAnchor = true;
+            }
+            continue;
+        }
+        if (el.classList.contains('bb-group-note-li') && el.previousElementSibling === firstHeader) {
+            continue;
+        }
+        if (el === dragRow) continue;
+        if (el.classList.contains('bb-group-note-li')) continue;
+        if (el.classList.contains('bb-collapsed-hidden') || el.classList.contains('bb-filter-hidden')) continue;
+        if (el.classList.contains('regex-script-label') || el.classList.contains('bb-regex-group-header')) {
+            candidates.push(el);
+        }
+    }
+
+    let refNode = null;
+    for (const cand of candidates) {
+        const rect = cand.getBoundingClientRect();
+        if (clientY < rect.top + rect.height * 0.5) {
+            refNode = cand;
+            break;
+        }
+    }
+
+    if (refNode) {
+        if (dragRow.nextElementSibling !== refNode) {
+            listEl.insertBefore(dragRow, refNode);
+            ds.reordered = true;
+        }
+    } else if (candidates.length > 0 || firstHeader) {
+        // Place at the end of the last visible section (before any hiddenTail items if filtered)
+        const lastVis = candidates[candidates.length - 1] || firstHeader;
+        let insertBeforeEl = lastVis.nextElementSibling;
+        // Skip group note or collapsed children belonging to `lastVis` if `lastVis` is a group header
+        while (
+            insertBeforeEl
+            && insertBeforeEl !== dragRow
+            && (insertBeforeEl.classList.contains('bb-group-note-li') || insertBeforeEl.classList.contains('bb-collapsed-hidden'))
+        ) {
+            insertBeforeEl = insertBeforeEl.nextElementSibling;
+        }
+        if (insertBeforeEl !== dragRow && dragRow.nextElementSibling !== insertBeforeEl) {
+            listEl.insertBefore(dragRow, insertBeforeEl);
+            ds.reordered = true;
+        }
+    }
+
+    const activeHeader = findPrecedingGroupHeader(dragRow);
+    updateDropHeaderHighlight(listEl, activeHeader);
+}
+
 function bindGlobalRegexListenersOnce() {
     if (rState.globalListenersBound) return;
     rState.globalListenersBound = true;
 
+    const activateDrag = (ds) => {
+        if (ds.active) return;
+        ds.active = true;
+        if (rState.rafId) {
+            cancelAnimationFrame(rState.rafId);
+            rState.rafId = null;
+        }
+        rState.rootObserver?.disconnect();
+        rState.observers.forEach(item => item.observer.disconnect());
+
+        ds.listEl.classList.add('bb-dragging-list');
+        ds.dragRow.classList.add('bb-dragging-row');
+        updateDropHeaderHighlight(ds.listEl, findPrecedingGroupHeader(ds.dragRow));
+
+        if (typeof ds.listEl.setPointerCapture === 'function' && ds.pointerId !== null) {
+            try {
+                ds.listEl.setPointerCapture(ds.pointerId);
+            } catch {
+                // Ignore
+            }
+        }
+
+        const tickAutoScroll = () => {
+            if (rState.dragState !== ds || !ds.active) return;
+            const sc = ds.scrollEl;
+            if (sc) {
+                const isRoot = sc === document.scrollingElement || sc === document.documentElement;
+                const rect = isRoot ? { top: 0, bottom: window.innerHeight } : sc.getBoundingClientRect();
+                const visTop = Math.max(0, rect.top);
+                const visBottom = Math.min(window.innerHeight, rect.bottom);
+                const edgeZone = 52;
+                const maxSpeed = 14;
+                let delta = 0;
+                if (ds.clientY < visTop + edgeZone) {
+                    const ratio = Math.min(1, Math.max(0.15, (visTop + edgeZone - ds.clientY) / edgeZone));
+                    delta = -Math.ceil(ratio * maxSpeed);
+                } else if (ds.clientY > visBottom - edgeZone) {
+                    const ratio = Math.min(1, Math.max(0.15, (ds.clientY - (visBottom - edgeZone)) / edgeZone));
+                    delta = Math.ceil(ratio * maxSpeed);
+                }
+                if (delta !== 0) {
+                    if (isRoot) {
+                        const prev = window.scrollY;
+                        window.scrollBy(0, delta);
+                        if (window.scrollY !== prev) repositionDraggedRegexRow(ds);
+                    } else {
+                        const prev = sc.scrollTop;
+                        sc.scrollTop += delta;
+                        if (sc.scrollTop !== prev) repositionDraggedRegexRow(ds);
+                    }
+                }
+            }
+            ds.scrollRaf = requestAnimationFrame(tickAutoScroll);
+        };
+        ds.scrollRaf = requestAnimationFrame(tickAutoScroll);
+    };
+
+    const finishDrag = async (cancelled = false) => {
+        const ds = rState.dragState;
+        if (!ds) return;
+        rState.dragState = null;
+
+        if (ds.scrollRaf) cancelAnimationFrame(ds.scrollRaf);
+        if (typeof ds.listEl?.releasePointerCapture === 'function' && ds.pointerId !== null) {
+            try {
+                ds.listEl.releasePointerCapture(ds.pointerId);
+            } catch {
+                // Ignore
+            }
+        }
+
+        ds.dragRow?.classList.remove('bb-dragging-row');
+        ds.listEl?.classList.remove('bb-dragging-list');
+        updateDropHeaderHighlight(ds.listEl, null);
+
+        if (!ds.active) return;
+        rState.suppressClickUntil = Date.now() + 260;
+
+        try {
+            if (!cancelled && ds.reordered && ds.listEl?.isConnected) {
+                const { listEl, dragRow, cfg } = ds;
+                const store = getStore(cfg.storeScope);
+                const validGroupIds = new Set(store.groups.map(g => g.id));
+                const prevRawGid = store.items[dragRow.id]?.groupId || null;
+                const prevGroupId = prevRawGid && validGroupIds.has(prevRawGid) ? prevRawGid : null;
+
+                const activeHeader = findPrecedingGroupHeader(dragRow);
+                let newGroupId = prevGroupId;
+                if (activeHeader) {
+                    if (activeHeader.dataset.bbDefaultGroup === '1') {
+                        newGroupId = null;
+                    } else if (activeHeader.dataset.bbGroupId && validGroupIds.has(activeHeader.dataset.bbGroupId)) {
+                        newGroupId = activeHeader.dataset.bbGroupId;
+                    }
+                }
+
+                if (!store.items[dragRow.id]) {
+                    store.items[dragRow.id] = { groupId: null, starred: false, note: '' };
+                }
+                store.items[dragRow.id].groupId = newGroupId;
+
+                // Recompute intra-group `order` and global script order from current DOM order
+                const domRows = Array.from(listEl.children).filter(el => el.classList.contains('regex-script-label') && el.id);
+                const buckets = new Map(store.groups.map(g => [g.id, []]));
+                const defaultBucket = [];
+
+                for (const r of domRows) {
+                    const rawGid = store.items[r.id]?.groupId || null;
+                    const gid = rawGid && validGroupIds.has(rawGid) ? rawGid : null;
+                    if (gid) {
+                        buckets.get(gid).push(r);
+                    } else {
+                        defaultBucket.push(r);
+                    }
+                }
+
+                const orderedRows = [];
+                for (const g of store.groups) {
+                    const list = buckets.get(g.id) || [];
+                    list.forEach((r, idx) => {
+                        if (!store.items[r.id]) store.items[r.id] = { groupId: g.id, starred: false, note: '' };
+                        store.items[r.id].order = idx;
+                        orderedRows.push(r);
+                    });
+                }
+                defaultBucket.forEach((r, idx) => {
+                    if (store.items[r.id]) {
+                        store.items[r.id].order = idx;
+                    }
+                    orderedRows.push(r);
+                });
+
+                orderedRows.forEach((r, idx) => {
+                    r.dataset.bbOrigIdx = String(idx);
+                });
+
+                const orderedIds = orderedRows.map(r => r.id);
+                await syncRegexOrderFromIds(cfg.origin, orderedIds);
+
+                if (newGroupId && newGroupId !== prevGroupId) {
+                    await enforceRegexGroupExclusivity(cfg.storeScope, cfg.origin, newGroupId, dragRow.id);
+                }
+                persistStore(cfg.storeScope);
+
+                if (newGroupId !== prevGroupId) {
+                    const targetName = newGroupId
+                        ? (store.groups.find(g => g.id === newGroupId)?.name || '分组')
+                        : '默认';
+                    showNotice(`已移入「${targetName}」`);
+                }
+            } else if (cancelled && ds.listEl?.isConnected && Array.isArray(ds.initialOrder)) {
+                for (const el of ds.initialOrder) {
+                    if (el.parentElement === ds.listEl) ds.listEl.appendChild(el);
+                }
+            }
+        } finally {
+            if (rState.boundRootEl?.isConnected) {
+                rState.rootObserver?.observe(rState.boundRootEl, { childList: true });
+            }
+            rState.observers.forEach(item => {
+                if (item.el.isConnected) item.observer.observe(item.el, { childList: true });
+            });
+            scheduleEnhanceRegexLists();
+        }
+    };
+
+    // 1. Window capture click handler: handles regex toggles by `id` (never relying on stale index closures after reorder)
+    //    and enforces `exclusive` radio group rules cleanly.
     window.addEventListener('click', async (e) => {
+        if (Date.now() < rState.suppressClickUntil && e.target instanceof Element && e.target.closest('#regex_container')) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            return;
+        }
         if (rState.batchMode) return;
         const toggleTarget = e.target instanceof Element
             ? e.target.closest('#regex_container .regex-toggle-on, #regex_container .regex-toggle-off, #regex_container input.disable_regex')
@@ -966,11 +1250,6 @@ function bindGlobalRegexListenersOnce() {
         const gid = store.items[row.id]?.groupId;
         const group = gid ? store.groups.find(g => g.id === gid) : null;
 
-        if (!group?.exclusive) {
-            setTimeout(() => scheduleEnhanceRegexLists(), 20);
-            return;
-        }
-
         const chk = row.querySelector('.disable_regex');
         const wasEnabled = chk ? !chk.checked : true;
         let nextEnabled = !wasEnabled;
@@ -985,7 +1264,7 @@ function bindGlobalRegexListenersOnce() {
         e.stopImmediatePropagation();
 
         let updates;
-        if (nextEnabled) {
+        if (group?.exclusive && nextEnabled) {
             const siblingIds = new Set();
             for (const el of listEl.querySelectorAll('.regex-script-label')) {
                 if (el.id && el.id !== row.id && store.items[el.id]?.groupId === gid) {
@@ -1002,7 +1281,7 @@ function bindGlobalRegexListenersOnce() {
                 ...Array.from(siblingIds).map(sid => ({ id: sid, origin: cfg.origin, enabled: false })),
             ];
         } else {
-            updates = [{ id: row.id, origin: cfg.origin, enabled: false }];
+            updates = [{ id: row.id, origin: cfg.origin, enabled: nextEnabled }];
         }
 
         for (const u of updates) {
@@ -1013,6 +1292,103 @@ function bindGlobalRegexListenersOnce() {
 
         await batchSetRegexEnabled(updates);
         scheduleEnhanceRegexLists();
+    }, true);
+
+    // 2. Window capture Pointer Drag for regex script rows (mobile `.drag-handle` + desktop `.drag-handle` / row body)
+    window.addEventListener('pointerdown', (e) => {
+        if (rState.batchMode || rState.dragState) return;
+        if (e.isPrimary === false || (e.pointerType === 'mouse' && e.button !== 0)) return;
+        if (!(e.target instanceof Element)) return;
+
+        const handleEl = e.target.closest('#regex_container .regex-script-label .drag-handle');
+        if (e.pointerType !== 'mouse' && !handleEl) return;
+
+        const dragRow = (handleEl || e.target).closest('#regex_container .regex-script-label');
+        const listEl = dragRow?.parentElement;
+        const cfg = CONTAINERS.find(c => c.id === listEl?.id);
+        if (!dragRow?.id || !listEl || !cfg) return;
+
+        if (!handleEl && e.target.closest(
+            'a, button, input, label, select, textarea, .menu_button, .regex_script_buttons, .regex-toggle-on, .regex-toggle-off, .edit_existing_regex, .delete_regex, .regex_bulk_checkbox',
+        )) {
+            return;
+        }
+
+        const ds = {
+            pointerId: e.pointerId,
+            listEl,
+            dragRow,
+            cfg,
+            scrollEl: findRegexScrollContainer(listEl),
+            startX: e.clientX,
+            startY: e.clientY,
+            clientY: e.clientY,
+            active: false,
+            reordered: false,
+            scrollRaf: 0,
+            initialOrder: Array.from(listEl.children),
+        };
+        rState.dragState = ds;
+
+        if (handleEl) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            activateDrag(ds);
+        }
+    }, true);
+
+    window.addEventListener('pointermove', (e) => {
+        const ds = rState.dragState;
+        if (!ds || e.pointerId !== ds.pointerId) return;
+        ds.clientY = e.clientY;
+
+        if (!ds.active) {
+            if (Math.hypot(e.clientX - ds.startX, e.clientY - ds.startY) < 5) return;
+            activateDrag(ds);
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        repositionDraggedRegexRow(ds);
+    }, true);
+
+    window.addEventListener('pointerup', (e) => {
+        const ds = rState.dragState;
+        if (!ds || e.pointerId !== ds.pointerId) return;
+        if (ds.active) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        finishDrag(false);
+    }, true);
+
+    window.addEventListener('pointercancel', (e) => {
+        const ds = rState.dragState;
+        if (!ds || e.pointerId !== ds.pointerId) return;
+        finishDrag(true);
+    }, true);
+
+    window.addEventListener('touchstart', (e) => {
+        if (rState.batchMode || !(e.target instanceof Element)) return;
+        const handleEl = e.target.closest('#regex_container .regex-script-label .drag-handle');
+        if (!handleEl) return;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+    }, { capture: true, passive: false });
+
+    window.addEventListener('touchmove', (e) => {
+        if (!rState.dragState?.active) return;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+    }, { capture: true, passive: false });
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && rState.dragState?.active) {
+            e.preventDefault();
+            finishDrag(true);
+        }
     }, true);
 }
 
